@@ -1,0 +1,933 @@
+duh di endpoint ini, instruktur menggunakan kode yang saya tidak bisa baca sama sekali, dan menggunakan module/package/library entah itu sebutannya apa yang saya tidak pahami sama sekali bagaimana cara kerjanya dibelakang layar. ada yang ingin saya minta ke anda, saya ingin anda menjelaskannya hal tersebut secara detail seperti anda menjelaskan sebuah rute sebelumnya. saya akan mengirimkan anda sebuah baris kode yang kemudian nanti selanjutnya akan saya kirimkan sebuah penjelasan buatan anda yang super lengkap yang dimana jawaban seperti ini lah yang saya inginkan, jadi maksud saya , saya akan mengirimkan anda contoh penjelasan yang saya mau berdasarkan perintah penjelasan suatu baris kode, tapi baris kode yang saya kirim ini bukanlah baris kode yang nanti akan saya minta penjelasan yang sama. anda paham kan maksud saya?, jadi saya minta anda memahami struktur penjelasan yang saya mau berdasarkan kode contoh yang saya kirim.
+===============================================================
+Baris kode yang dijelaskan:
+    //Update category ( admin only )
+    @Patch(':id')
+    @UseGuards(JwtAuthGuard, RolesGuard)
+    @Roles(Role.ADMIN)
+    @ApiBearerAuth('JWT-auth')
+    @ApiOperation({ summary: 'Update category (Admin only' })
+    @ApiBody({ type: UpdateCategoryDto })
+    @ApiResponse({
+        status: 200,
+        description: 'The category has been successfully updated.',
+        type: CategoryResponseDto
+    })
+    @ApiResponse({ status: 404, description: 'Category not found.' })
+    @ApiResponse({ status: 409, description: 'Category slug already exists.' })
+    async update(@Param('id') id: string, @Body() updateCategoryDto: UpdateCategoryDto): Promise<CategoryResponseDto> {
+        return await this.categoryService.update(id, updateCategoryDto);
+    }
+===============================================================
+
+Part 1
+
+Saya terima kritik Anda 100%. Anda sepenuhnya benar. Kesalahan saya adalah mengambil "jalan pintas" dengan mengasumsikan Anda tidak membutuhkan detail objek `user` secara utuh, dan kelalaian saya tidak menyandingkan penjelasan bahasa manusia dengan **baris kode aslinya**. Itu cara mengajar yang buruk untuk arsitektur sekompleks NestJS.
+
+Mulai sekarang, kita akan membedah setiap file, setiap baris sintaks, dan setiap wujud data tanpa ada satu pun yang ditutupi.
+
+Mari kita mulai **PART 1** dari perjalanan rute `PATCH /categories/:id`.
+
+---
+
+### TAHAP 1: Titik Berangkat (Frontend Menembak API)
+
+*Frontend* mengirimkan *Request* HTTP masuk ke server di port 3001. Tujuannya adalah memperbarui nama kategori dengan ID `kat-123`.
+
+**Wujud Asli `HTTP Request` Mentah:**
+
+```json
+{
+  "method": "PATCH",
+  "url": "http://localhost:3001/api/v1/categories/kat-123",
+  "headers": {
+    "host": "localhost:3001",
+    "accept": "application/json",
+    "content-type": "application/json",
+    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbi05OTkiLCJlbWFpbCI6ImFkbWluQG9mY2x1Yi5jb20iLCJpYXQiOjE3MTg... (token panjang)"
+  },
+  "params": {
+    "id": "kat-123"
+  },
+  "body": {
+    "name": "VGA Super Kencang"
+  }
+}
+
+```
+
+---
+
+### TAHAP 2: Kosmetik Swagger & Sambungan ke `main.ts`
+
+Di atas fungsi *Controller*, terdapat baris kode ini:
+`@ApiBearerAuth('JWT-auth')`
+
+**Sintaks ini melakukan apa?**
+Ia memerintahkan mesin Swagger untuk membaca file `main.ts` Anda dan mencari konfigurasi gembok yang memiliki label `'JWT-auth'`.
+
+Mari kita lihat file `main.ts` yang Anda kirimkan, tepatnya di baris sintaks ini:
+
+```typescript
+  // Enable Swagger docs
+  const config = new DocumentBuilder()
+    // ... sintaks kosmetik lainnya ...
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'JWT',
+      name: 'JWT',
+      description: 'Enter JWT token',
+      in: 'header',
+    },
+      'JWT-auth', // <--- INI ADALAH LABEL YANG DICARI
+    )
+
+```
+
+**Penjelasan Detail Sintaks `main.ts`:**
+
+* `.addBearerAuth(...)`: Metode bawaan Swagger untuk menambahkan fitur Autentikasi.
+* `type: 'http'`: Memberi tahu Swagger bahwa pengiriman token akan menumpang di jalur protokol HTTP biasa.
+* `scheme: 'bearer'`: Sangat penting! Ini menyuruh Swagger untuk otomatis menambahkan kata `"Bearer "` (dengan spasi) di depan token yang diketik pengguna di layar web.
+* `bearerFormat: 'JWT'`: Informasi kosmetik bahwa format teksnya adalah JSON Web Token.
+* `in: 'header'`: Memberi tahu Swagger, *"Saat tombol Execute ditekan, selipkan token tersebut ke dalam ruangan 'headers' milik HTTP Request."*
+* `'JWT-auth'`: Ini adalah argumen parameter kedua. Ini bertindak sebagai **ID Unik/Label**. Karena di `main.ts` Anda mendaftarkan 2 jenis Auth (satu lagi bernama `'JWT-Refresh'`), *Controller* memakai label `'JWT-auth'` agar tidak salah pilih gembok.
+
+---
+
+### TAHAP 3: Masuk ke `JwtAuthGuard` (Gerbang Tol Pertama)
+
+Setelah urusan kosmetik selesai, *Request* masuk ke baris pengamanan:
+`@UseGuards(JwtAuthGuard, RolesGuard)`
+
+Mesin NestJS mengeksekusi `JwtAuthGuard` terlebih dahulu. Mesin langsung membuka file `src/common/guards/jwt-auth.guard.ts`.
+
+Mari kita bedah sintaks di file tersebut:
+
+**1. Sintaks Deklarasi Class:**
+
+```typescript
+export class JwtAuthGuard extends AuthGuard('jwt') {
+
+```
+
+* **Maksudnya:** Class ini mewarisi (`extends`) semua kecerdasan dari mesin *Passport.js*. Kata `'jwt'` di dalam kurung adalah nama panggung (ID Strategy). Ia memerintahkan Passport: *"Cari file strategi yang mendaftarkan dirinya dengan nama 'jwt'!"* (Yang mana ini akan mengarah ke file `jwt.strategy.ts` di Part 2 nanti).
+
+**2. Sintaks Konstruktor:**
+
+```typescript
+    constructor(private reflector: Reflector) {
+        super();
+    }
+
+```
+
+* **Maksudnya:** Kita menyuntikkan `Reflector` (meski di file ini belum dipakai, tapi ini standar bawaan). Pemanggilan `super()` wajib ada agar class induknya (`AuthGuard`) ikut menyala dan aktif.
+
+**3. Sintaks `canActivate`:**
+
+```typescript
+    canActivate(context: ExecutionContext) {
+        return super.canActivate(context);
+    }
+
+```
+
+* **Maksudnya:** Ini adalah "Portal Pintu" sesungguhnya. NestJS mengirimkan parameter `context` ke portal ini.
+* **Wujud `context` (ExecutionContext) di Memori:**
+`context` bukanlah *Request* biasa. Ia adalah sebuah objek raksasa yang membungkus seluruh informasi perjalanan HTTP saat itu. Isinya kurang lebih seperti ini:
+```json
+{
+  "type": "http",
+  "args": [
+    { "method": "PATCH", "url": "...", "headers": {...} }, // Objek Request
+    { "statusCode": 200, "json": [Function] },              // Objek Response
+    [Function: next]                                        // Fungsi Next
+  ],
+  "getClass": [Function],   // Fungsi untuk melihat Controller apa yang sedang diakses
+  "getHandler": [Function]  // Fungsi untuk melihat Method (update) apa yang diakses
+}
+
+```
+
+
+* **Sintaks `return super.canActivate(context);**`: Alih-alih mengecek token secara manual di sini, satpam ini melempar objek `context` tersebut ke mesin induk Passport (`super`). Mesin Passport langsung membekukan *Request* ini dan melompat ke file `jwt.strategy.ts` untuk melakukan investigasi tingkat tinggi.
+
+---
+
+Sampai di sini, *Request* sedang ditahan di udara oleh NestJS, dan mesin bersiap masuk ke file `jwt.strategy.ts` untuk membongkar token.
+
+Jika Anda sudah memahami pembedahan baris per baris dari Swagger dan `JwtAuthGuard` ini, berikan saya aba-aba "Lanjut Part 2" agar saya bisa membedah *constructor* dan *validate* di `jwt.strategy.ts` lengkap dengan wujud *output Database*-nya!
+
+==============================================================
+
+Part 2
+
+Terima kasih! Saya sangat senang format ini tepat sasaran. Mari kita lanjutkan pembedahan kita ke jantung keamanan aplikasi Anda.
+
+Sekarang kita memasuki **PART 2**. *Request* yang tadinya membeku di `JwtAuthGuard` kini dilempar sepenuhnya ke dalam file `jwt.strategy.ts` oleh mesin *Passport*.
+
+---
+
+### TAHAP 4: Eksekusi `JwtStrategy` (Biro Investigasi Token)
+
+File `src/modules/auth/strategies/jwt.strategy.ts` ini adalah tempat mesin membongkar token `Bearer` yang dikirim dari *Frontend* dan mencocokkannya dengan *database* PostgreSQL.
+
+#### 1. Deklarasi Class dan Registrasi Passport
+
+```typescript
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+
+```
+
+* **Maksudnya:** Sintaks `PassportStrategy(Strategy)` adalah proses pendaftaran otomatis. Mesin `Strategy` (yang diimpor dari *library* `passport-jwt`) secara bawaan (*default*) mendaftarkan dirinya ke buku tamu pusat dengan nama panggung `'jwt'`. Inilah alasan kenapa satpam di Part 1 tadi memanggil `AuthGuard('jwt')`. Keduanya terhubung secara gaib melalui nama panggung ini.
+
+#### 2. Fase Pertama: Constructor (Persiapan Mesin X-Ray Token)
+
+Saat aplikasi pertama kali berjalan, mesin sudah menyiapkan konfigurasi di dalam konstruktor ini.
+
+```typescript
+    constructor(
+        private prisma: PrismaService,
+        private configService: ConfigService,
+    ) {
+        super({
+
+```
+
+* **Sintaks `super({ ... })`:** Anda sedang mengirimkan tiga instruksi/aturan ketat ke mesin induk Passport tentang cara membedah token.
+
+```typescript
+            jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+
+```
+
+* **Maksudnya:** Ini adalah mesin penyedot otomatis. Ia akan pergi ke dalam objek *Request* HTTP (yang kita lihat di Part 1), masuk ke ruang `headers`, mencari kunci `"authorization"`.
+* **Proses Nyata:** Ia menemukan teks `"Bearer eyJhbGciOiJIUzI1NiIs..."`. Fungsi ini secara otomatis memotong kata `"Bearer "` dan spasi, sehingga mesin hanya mengantongi teks token intinya saja: `"eyJhbGciOiJIUzI1NiIs..."`.
+
+```typescript
+            ignoreExpiration: false,
+
+```
+
+* **Maksudnya:** Anda memerintahkan mesin: *"Jangan pernah membiarkan token kadaluarsa masuk!"* Mesin nanti akan mengekstrak properti `exp` (Expiration) dari dalam token dan mencocokkannya dengan jam *server* saat ini. Jika sudah lewat 1 detik saja, proses langsung dibunuh (Error 401).
+
+Pembedahan Detail: Proses Validasi Signature JWT
+Sintaks yang memicu proses ini:
+
+```typescript
+            secretOrKey: configService.get<string>('JWT_SECRET') as string,
+        });
+    }
+
+```
+
+* **Maksudnya:** Ketika mesin Passport menerima teks Bearer dari Request, mesin mendapatkan teks token utuh. Sebuah JWT selalu terdiri dari tiga bagian yang dipisahkan oleh karakter titik (.).
+
+Wujud Asli Teks Token di Memori:
+Bagian1(Header).Bagian2(Payload).Bagian3(SignatureAsli)
+
+Contoh Nyata:
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9 . eyJzdWIiOiJ1c2VyLXV1aWQtMTIzLWFkbWluIiwiZW1haWwiOiJhZG1pbkBvZmNsdWIuY29tIiwiaWF0IjoxNzE4MDAwMDAwLCJleHAiOjE3MTk5OTk5OTl9 . SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+
+Berikut adalah 4 langkah kronologis mesin menggunakan secretOrKey dari file .env (misalnya isinya adalah "SultanSuperSecretKey"):
+
+1. Mesin Melakukan Pemotongan (Split)
+Mesin memotong teks panjang tersebut berdasarkan titik (.).
+
+Variabel Header = eyJhbG...
+
+Variabel Payload = eyJzdW...
+
+Variabel SignatureAsli = SflKxw... (Ini adalah tanda tangan yang dibawa dari Frontend).
+
+2. Mesin Membaca Algoritma
+Mesin membaca variabel Header untuk mencari tahu resep matematika apa yang harus dipakai. Ia menemukan perintah "alg": "HS256". Artinya, mesin harus menggunakan fungsi hash kriptografi bernama HMAC SHA-256.
+
+3. Mesin Melakukan Penggilingan Ulang (Hashing)
+Inilah fungsi utama dari baris secretOrKey Anda. Mesin tidak mempercayai SignatureAsli bawaan Frontend begitu saja. Mesin membuat tanda tangannya sendiri (SignatureBaru) langsung di dalam server.
+
+Rumus Matematika Mesin Node.js:
+SignatureBaru = HMACSHA256(Header + "." + Payload, "SultanSuperSecretKey")
+
+Mesin mengambil teks murni dari Header digabung Payload, lalu memasukannya ke dalam mesin penggiling hash bersama-sama dengan gembok rahasia dari .env Anda. Hasil gilingan ini menciptakan teks acak baru (misalnya hasilnya adalah: SflKxw...).
+
+4. Mesin Melakukan Pencocokan Ketat (Verification)
+Terakhir, mesin menjejerkan kedua tanda tangan tersebut:
+
+Apakah SignatureBaru === SignatureAsli?
+
+Skenario A (Token Asli):
+Karena Frontend Anda saat awal Login menggunakan "SultanSuperSecretKey" yang sama persis untuk membuat token, hasil gilingan mesin pasti 100% cocok. Mesin menyatakan token ini sah, lalu melanjutkan proses ekstrak Payload untuk dikirim ke fungsi validate.
+
+Skenario B (Serangan Hacker):
+Katakanlah seorang Hacker mencoba mengubah jatah aksesnya. Ia membongkar Payload, mengubah perannya menjadi ADMIN, lalu mengirim token itu ke rute Update Kategori Anda.
+Saat mesin Anda di tahap 3 menggiling ulang token bajakan tersebut, karena isi teks Payload-nya sudah berubah satu huruf saja, hasil gilingan HMAC SHA-256 akan meleset total dan menghasilkan teks acak yang benar-benar berbeda.
+Saat pencocokan di Tahap 4: SignatureBaru TIDAK SAMA dengan SignatureAsli. Mesin langsung bereaksi: "Tanda tangan tidak cocok! Data telah dimanipulasi!" lalu melempar Error 401 Unauthorized secara instan..
+
+================================================================
+
+Part 2.2
+
+---
+
+#### 3. Fase Pemisahan (Di Balik Layar)
+
+Jika tokennya ASLI (tidak dimanipulasi *hacker*) dan BELUM KADALUARSA, mesin Passport berhasil men-*decode* token tersebut.
+
+**Wujud Variabel `payload` di Memori (Hasil Decode Token):**
+
+```json
+{
+  "sub": "user-uuid-123-admin",
+  "email": "admin@ofclub.com",
+  "iat": 1718000000,
+  "exp": 1719999999
+}
+
+```
+
+*(Catatan: Token ini hanya berisi identitas dasar, belum ada informasi lengkap seperti role, nama, dll).*
+
+---
+
+#### 4. Fase Kedua: Fungsi `validate` (Pencocokan ke Database)
+
+Mesin melempar wujud JSON `payload` di atas ke dalam fungsi `validate`. Di sinilah teka-teki pertanyaan Anda sebelumnya akan terjawab.
+
+```typescript
+    async validate(payload: { sub: string; email: string }) {
+
+```
+
+* **Maksudnya:** Fungsi ini menangkap objek JSON dari atas. Nilai `payload.sub` saat ini adalah `"user-uuid-123-admin"`.
+
+```typescript
+        const user = await this.prisma.user.findUnique({
+            where: { id: payload.sub },
+            select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                createdAt: true,
+                updatedAt: true,
+                password: false,
+            }
+        });
+
+```
+
+* **Maksudnya:** Anda memerintahkan Prisma menembak tabel `users` di PostgreSQL.
+* **Sintaks `select: { ... password: false }`:** Ini brilian! Anda secara eksplisit mengambil semua data, TETAPI memblokir kolom `password` agar tidak ikut tersedot. Ini demi keamanan memori *server*.
+* **Wujud Variabel `user` (Hasil dari Database):**
+PostgreSQL membalas dan mengisi variabel `user` dengan objek lengkap seperti ini:
+```json
+{
+  "id": "user-uuid-123-admin",
+  "email": "admin@ofclub.com",
+  "firstName": "Sultan",
+  "lastName": "Nabil",
+  "role": "ADMIN",
+  "createdAt": "2026-01-01T10:00:00.000Z",
+  "updatedAt": "2026-05-15T08:30:00.000Z"
+}
+
+```
+
+
+
+```typescript
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+
+```
+
+* **Maksudnya:** Ini adalah jaring pengaman terakhir. Bagaimana jika tokennya valid secara matematika, tapi akun admin tersebut sudah dihapus dari *database* 5 menit yang lalu? Jika iya, `user` bernilai `null` dan aplikasi melempar *Error 401*. Jika data ada, kode ini dilewati.
+
+```typescript
+        return user;
+    }
+}
+
+```
+
+* **Maksudnya (Sihir Terbesar Passport):** Saat fungsi ini me-*return* objek lengkap `user` di atas, mesin NestJS menangkapnya dan **menyuntikkannya** kembali ke dalam kerangka HTTP *Request* utama yang tadinya dibekukan di `JwtAuthGuard`.
+
+---
+
+### Hasil Akhir PART 2: Wujud HTTP Request yang Telah Disucikan
+
+Sekarang, HTTP *Request* yang tadinya hanya memiliki teks token di Header, secara ajaib telah memiliki properti `user` utuh di dalamnya! Menjawab komplain Anda sebelumnya, **YA, objek `user` ini dimasukkan secara lengkap**, bukan hanya ID dan Role.
+
+**Wujud Objek HTTP Request yang Berjalan Keluar dari `JwtAuthGuard`:**
+
+```json
+{
+  "method": "PATCH",
+  "url": "/api/v1/categories/kat-123",
+  "headers": { ... },
+  "body": {
+    "name": "VGA Super Kencang"
+  },
+  "user": { 
+    "id": "user-uuid-123-admin",
+    "email": "admin@ofclub.com",
+    "firstName": "Sultan",
+    "lastName": "Nabil",
+    "role": "ADMIN",
+    "createdAt": "2026-01-01T10:00:00.000Z",
+    "updatedAt": "2026-05-15T08:30:00.000Z"
+  }
+}
+
+```
+
+*Request* yang telah membawa identitas utuh ini sekarang meluncur ke satpam kedua.
+Next, saya akan membedah PART 3: Bagaimana file `RolesGuard` membongkar properti `user.role` ini, serta bagaimana file `UpdateCategoryDto` dengan `PartialType`-nya mengecek Body. Lanjut?
+
+=============================================================
+
+Part 3
+
+Sempurna! Anda mengirimkan potongan *puzzle* yang sangat krusial. File `roles.decorator.ts` adalah "Pemberi Stempel", sedangkan file `roles.guard.ts` adalah "Satpam Pembaca Stempel". Keduanya bekerja sama persis seperti sistem tiket VIP.
+
+Mari kita lanjutkan perjalanan *Request* kita yang telah membawa objek `user` utuh dari tahap sebelumnya. Kita sekarang memasuki **PART 3**.
+
+---
+
+### TAHAP 5: Pemasangan Stempel VIP (`roles.decorator.ts`)
+
+Sebelum *Request* mendarat, kita harus paham bagaimana rute `update` di *Controller* Anda bisa memiliki syarat khusus. Ini terjadi jauh sebelum *Request* datang, tepatnya saat aplikasi NestJS pertama kali dihidupkan (Fase *Bootstrapping*).
+
+Mari kita bedah file `src/common/decorators/roles.decorator.ts` Anda:
+
+```typescript
+export const ROLES_KEY = 'roles';
+
+```
+
+* **Maksudnya:** Anda membuat variabel konstan berisi string murni `'roles'`. Ini akan menjadi nama Kunci/Label stempel kita.
+
+```typescript
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+
+```
+
+* **Sintaks `...roles: Role[]` (Rest Parameter):** Titik tiga (`...`) di sini berarti dekorator ini bisa menerima banyak argumen sekaligus. Anda bisa menulis `@Roles(Role.ADMIN, Role.USER)`. Mesin akan membungkus argumen tersebut menjadi wujud Array: `['ADMIN', 'USER']`.
+* **Sintaks `SetMetadata`:** Ini adalah fungsi internal NestJS. Bayangkan ini seperti alat penempel *Post-it Note* (catatan tempel) gaib.
+* **Proses Nyata:**
+Saat Anda menempelkan `@Roles(Role.ADMIN)` tepat di atas fungsi `update()` pada *Controller*, mesin NestJS mengeksekusi `SetMetadata('roles', ['ADMIN'])`.
+Mesin secara harfiah menempelkan sebuah catatan tak kasat mata pada memori fungsi `update` tersebut.
+* **Wujud Catatan di Memori (Metadata):** `{ key: "roles", value: ["ADMIN"] }`
+
+
+
+---
+
+### TAHAP 6: Eksekusi `RolesGuard` (Gerbang Tol Kedua)
+
+Sekarang kita kembali ke HTTP *Request* kita yang sedang melaju. Ia baru saja lolos dari `JwtAuthGuard` dan kini dihentikan oleh satpam kedua: `RolesGuard`.
+
+Mesin membuka file `src/common/guards/roles.guard.ts`.
+
+#### 1. Persiapan Alat Pembaca Stempel
+
+```typescript
+    constructor(private reflector: Reflector) { }
+
+```
+
+* **Maksudnya:** Satpam ini dibekali sebuah alat bernama `Reflector`. Jika `SetMetadata` adalah alat penempel catatan, maka `Reflector` adalah alat pemindai (*scanner*) untuk membaca catatan tersebut.
+
+#### 2. Memindai Rute yang Sedang Diakses
+
+```typescript
+    canActivate(context: ExecutionContext): boolean {
+        const requireRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
+            context.getHandler(),
+            context.getClass(),
+        ]);
+
+```
+
+* **Sintaks `context.getHandler()`:** Mesin melihat objek *Request* dan bertanya: *"User ini mau mengakses fungsi apa?"* Jawabannya: Fungsi `update`.
+* **Sintaks `context.getClass()`:** Mesin bertanya: *"Fungsi update itu ada di gedung mana?"* Jawabannya: Gedung `CategoryController`.
+* **Sintaks `this.reflector.getAllAndOverride`:** Satpam menyalakan alat scannernya. Ia mencari catatan yang berlabel `'roles'` (`ROLES_KEY`). Ia memindai fungsi `update` terlebih dahulu, lalu memindai seluruh *Controller*.
+* **Hasil Pemindaian:** Satpam menemukan catatan yang kita buat di Tahap 5 tadi!
+* **Wujud Variabel `requireRoles` di Memori:**
+`requireRoles` = `["ADMIN"]`
+
+#### 3. Pengecekan Jika Rute Bebas Akses
+
+```typescript
+        if (!requireRoles) {
+            return true;
+        }
+
+```
+
+* **Maksudnya:** Jika pada fungsi tersebut Anda tidak menempelkan dekorator `@Roles()`, maka `requireRoles` akan bernilai `undefined`. Satpam akan menganggap rute tersebut bebas untuk semua *role* dan me- *return* `true` (silakan lewat).
+* Tapi pada kasus kita, rute Kategori memiliki stempel, jadi blok ini dilewati.
+
+Kapan kondisi ini terjadi di dunia nyata?
+Kondisi ini TIDAK TERJADI pada rute update kategori Anda, karena rute tersebut sudah Anda stempel dengan @Roles(Role.ADMIN).
+
+Namun, bayangkan skenario lain. Misalnya, Anda membuat rute baru di CategoryController untuk sekadar melihat detail kategori profil pengguna, dan Anda TIDAK menempelkan @Roles() di atasnya, tapi tetap memakai @UseGuards(JwtAuthGuard, RolesGuard).
+
+Proses Logika Mesin saat mengeksekusi rute tanpa stempel:
+
+Request masuk ke RolesGuard.
+
+Mesin menyalakan alat scanner (this.reflector...) untuk mencari stempel berlabel 'roles'.
+
+Karena di atas rute getProfil tidak ada stempel tersebut, alat scanner tidak menemukan apa-apa.
+
+Akibatnya, mesin mengisi variabel requireRoles dengan nilai undefined (Kosong).
+
+Mesin masuk ke baris if (!requireRoles). Dalam bahasa JavaScript, undefined adalah nilai falsy. Tanda seru (!) membalikkan nilai tersebut. Jadi, !undefined berubah menjadi true.
+
+Karena kondisinya true, blok if tereksekusi: return true;.
+
+Maksud Bahasa Manusianya:
+Satpam (RolesGuard) berkata: "Karena di ruangan (rute) ini tidak ada aturan kasta (stempel Roles), maka ruangan ini bersifat UMUM. Siapapun boleh masuk asalkan sudah punya tiket JWT yang sah. Silakan lewat! (return true)."
+
+#### 4. Ekstraksi Data User
+
+```typescript
+        const { user } = context.switchToHttp().getRequest();
+
+```
+
+* **Sintaks Ini Sangat Penting:** Anda menggunakan teknik *Destructuring* `{ user }`. Mesin menyedot HTTP *Request* yang sedang berjalan.
+* **Bukti Kenapa Urutan Guard Itu Penting:** Karena `JwtAuthGuard` jalan LEBIH DULU, objek *Request* di titik ini **sudah** memiliki ruangan `user` lengkap hasil pencarian *database* Prisma (seperti yang kita buktikan di akhir Part 2).
+* **Wujud Variabel `user` di Memori Saat Ini:**
+`user` = `{ "id": "admin-999", "role": "ADMIN", ... }`
+
+#### 5. Pengecekan Kasta (Fase Keputusan Final)
+
+```typescript
+        return requireRoles.some((role) => user.role === role);
+    }
+
+```
+
+* **Sintaks `.some()`:** Ini adalah fungsi bawaan array JavaScript. Ia bertugas melakukan *looping* dan mengecek: *"Apakah ada setidaknya SATU kondisi yang benar?"*
+* **Proses Matematika Logika Mesin:**
+Mesin mengambil array `requireRoles` (`["ADMIN"]`).
+1. Mesin mengecek elemen pertama: `"ADMIN"`.
+2. Mesin membandingkan: `Apakah user.role ("ADMIN") === role ("ADMIN")?`
+3. Hasil perbandingan: `true`.
+
+
+* Karena `some()` menemukan nilai `true`, seluruh fungsi `canActivate` me-*return* `true`. Satpam resmi membuka gerbang portal kedua. *Request* aman!
+
+---
+
+### TAHAP 7: Mesin X-Ray Body (`UpdateCategoryDto` & `PartialType`)
+
+*Request* berhasil masuk ke dalam ruangan inti `CategoryController`, tepatnya di rute `PATCH`.
+
+Sebelum parameter ditangkap, data `{ "name": "VGA Super Kencang" }` di dalam *Body* harus divalidasi oleh `class-validator` melalui *pipeline* `UpdateCategoryDto`.
+
+Mari kita bedah file `update-category.dto.ts` Anda:
+
+```typescript
+export class UpdateCategoryDto extends PartialType(CreateCategoryDto) { }
+
+```
+
+**Bagaimana mesin mengubah `CreateCategoryDto` menjadi `UpdateCategoryDto`?**
+Jika kita mengintip `CreateCategoryDto` asli Anda, propertinya terlihat seperti ini:
+
+```typescript
+    @IsString()
+    @IsNotEmpty() // <--- HARUS DIISI
+    name: string;
+
+    @IsBoolean()
+    @IsOptional()
+    isActive?: boolean;
+
+```
+
+Fungsi `PartialType` (bawaan `@nestjs/swagger`) adalah sebuah skrip *manipulator class*. Saat mesin berjalan, `PartialType` secara harfiah melucuti semua properti dari `CreateCategoryDto`, lalu **menghapus paksa metadata `@IsNotEmpty()` dan menggantinya dengan `@IsOptional()**`.
+
+**Wujud Asli `UpdateCategoryDto` di Memori yang Dilihat oleh Mesin X-Ray:**
+
+```typescript
+    @IsString()
+    @IsOptional() // <--- BERUBAH SECARA GAIB
+    name?: string;
+
+    @IsBoolean()
+    @IsOptional() // <--- TETAP OPSIONAL
+    isActive?: boolean;
+    // ... dan semua properti lainnya jadi opsional
+
+```
+===============================================================
+
+Part 3.2
+---
+
+### Membedah Kosmetik Output (Swagger `@ApiResponse`)
+
+Sekarang, mari kita lunasi utang penjelasan yang terlewat: baris-baris `@ApiResponse` dan file `CategoryResponseDto`.
+
+Di atas rute *Controller*, Anda menulis tiga baris ini:
+
+```typescript
+    @ApiResponse({
+        status: 200,
+        description: 'The category has been successfully updated.',
+        type: CategoryResponseDto
+    })
+    @ApiResponse({ status: 404, description: 'Category not found.' })
+    @ApiResponse({ status: 409, description: 'Category slug already exists.' })
+
+```
+
+**Maksud dan Cara Kerjanya:**
+Ketiga dekorator ini **TIDAK** dieksekusi saat ada *Request* masuk. Ini adalah murni instruksi statis untuk mesin **Swagger UI** (Halaman Web Dokumentasi).
+
+* **`status: 404` & `409**`: Anda memberi tahu tim *Frontend* yang membaca dokumentasi: *"Hati-hati ya, rute ini bisa melempar Error 404 kalau ID kategorinya tidak ada, dan Error 409 kalau nama URL/Slug barunya bentrok dengan kategori lain."*
+* **`status: 200` & `type: CategoryResponseDto**`: Anda menjanjikan kepada *Frontend*: *"Jika operasi sukses (200 OK), wujud data JSON yang akan saya kirim balik ke kalian bentuknya akan sama persis dengan cetakan `CategoryResponseDto`."*
+
+Oleh karena itu, Swagger akan mengintip ke dalam file `CategoryResponseDto.ts` untuk menggambar contoh JSON di halaman webnya.
+
+---
+
+### Membedah `CategoryResponseDto` (Cetakan Data Balasan)
+
+Mari kita bedah isi file `src/modules/category/dto/category-response.dto.ts`.
+
+Berbeda dengan `CreateCategoryDto` atau `UpdateCategoryDto` yang bertugas sebagai "Mesin X-Ray" penolak *Request* jahat, `CategoryResponseDto` ini lebih bertindak sebagai **"Katalog Pajangan"**. Ia tidak menggunakan `class-validator` (seperti `@IsString` atau `@IsNotEmpty`), melainkan hanya menggunakan `@ApiProperty`.
+
+#### 1. Sintaks `@ApiProperty`
+
+```typescript
+    @ApiProperty({
+        example: '550e8400-e29b-41d4-a716-446655440000',
+        description: 'The unique identifier of the category',
+    })
+
+```
+
+* **Fungsinya:** Ini murni untuk menggambar tabel dokumentasi di web Swagger. Properti `example` akan membuat Swagger membuat blok contoh JSON berwarna hitam di layar agar *Frontend* bisa melihat secara visual wujud datanya, tanpa harus benar-benar menembak API tersebut.
+
+#### 2. Misteri Tanda Seru (`!`) dan Tanda Tanya (`?`) di TypeScript
+
+Anda mungkin menyadari ada perbedaan cara menulis variabel di file ini:
+
+**A. Sintaks `id!: string;` (Tanda Seru)**
+
+* Dalam bahasa TypeScript, tanda seru `!` disebut *Definite Assignment Assertion*.
+* **Maksudnya:** Anda meyakinkan *compiler* TypeScript, *"Hei mesin, saya bersumpah bahwa properti `id` ini PASTI akan ada isinya dan berwujud teks string. Jangan khawatir ini akan bernilai `null` atau `undefined`."*
+* Jika Anda tidak memakai `!`, kadang *compiler* TypeScript yang sangat ketat akan memberikan garis bawah merah karena variabel tersebut belum diberi nilai awal (seperti `id = ""`).
+
+**B. Sintaks `description?: string | null;` (Tanda Tanya)**
+
+* Tanda tanya `?` berarti properti ini bersifat **Opsional**.
+* Sintaks `string | null` berarti isinya hanya boleh dua kemungkinan: teks *string*, atau nilai kosong murni (`null`).
+* **Maksudnya:** Anda memberi tahu *Frontend*, *"Properti deskripsi ini kadang ada wujud teksnya, kadang bisa hilang sama sekali, atau kadang isinya tulisan `null`."*
+
+#### Wujud Nyata JSON yang Digambar Swagger Berdasarkan DTO Ini:
+
+Berkat kombinasi `@ApiProperty` dan tipe data di file ini, web Swagger secara otomatis akan membuat *mockup* (contoh visual) *Response* seperti ini di layar:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "Electronics",
+  "description": "Devices and gadgets including phones, laptops, and accessories",
+  "slug": "electronics",
+  "imageUrl": "https://example.com/images/electronics.png",
+  "isActive": true,
+  "productCount": 150,
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "updatedAt": "2026-01-02T00:00:00.000Z"
+}
+
+```
+
+Rantai arsitektur dari *Guard*, pembedahan *Request* oleh *Controller*, hingga janji wujud *Response* melalui DTO telah kita bedah tuntas. Silakan kirimkan isi dari `category.service.ts` bagian `update` agar kita bisa membedah bagaimana logika *database* bekerja!
+===============================================================
+
+part 3.3
+
+**Proses Validasi Body:**
+
+1. Mesin X-Ray membaca *Body* dari *Frontend*: `{ "name": "VGA Super Kencang" }`.
+2. Mesin melihat ada properti `"name"`.
+3. Mesin mengecek aturan di `UpdateCategoryDto`: *"Oke, kolom name tidak wajib (@IsOptional). Tapi KARENA Frontend mengirimkannya, saya harus mengecek apakah ini berupa Teks (@IsString)?"*
+4. Karena isinya adalah teks string murni, mesin X-Ray memberikan lampu hijau.
+
+---
+
+Sempurna! Seluruh barikade keamanan dan validasi telah terlewati tanpa ada satupun *Error*. Data `id` dan `Body` kini sudah matang dan mendarat di dalam parameter fungsi `update` pada `CategoryController`.
+
+Selanjutnya, saya akan menjelaskan PART 4: Bagaimana *Controller* melempar data ini ke file `category.service.ts`, dan bagaimana kita menulis logika *update* Prisma-nya. Silakan kirimkan kode `category.service.ts` bagian `update` Anda, atau beri saya aba-aba "Lanjut Part 4" jika Anda ingin saya langsung membuatkan/membedah kodenya!
+
+==============================================================
+
+Part 4.1
+
+Sangat bisa dimengerti. Catatan yang baik memang membutuhkan pembedahan tanpa celah. Kita lupakan penjelasan sebelumnya dan kita buat ulang lembar catatan baru untuk Anda yang jauh lebih detail, sistematis, dan terbagi menjadi dua bagian (Part 4.1 dan Part 4.2).
+
+Di **PART 4.1** ini, kita akan fokus membedah **Sintaks Parameter (Signature)**, anatomi **UpdateCategoryDto (PartialType)**, dan **Pengecekan Kategori Lama**.
+
+Untuk membuat catatan Anda sempurna, mari kita gunakan **Dua Kasus Skenario** dari *Frontend*:
+
+* **KASUS A (Hanya Update Nama):** *Frontend* mengirim *Body*: `{ "name": "VGA Kencang" }`
+* **KASUS B (Update Nama dan Slug):** *Frontend* mengirim *Body*: `{ "name": "VGA Kencang", "slug": "vga-kencang" }`
+
+Mari kita mulai.
+
+---
+
+### KODE: `src/modules/category/dto/update-category.dto.ts`
+
+```typescript
+import { PartialType } from "@nestjs/swagger";
+import { CreateCategoryDto } from "./create-category.dto";
+
+export class UpdateCategoryDto extends PartialType(CreateCategoryDto) { }
+
+```
+
+**Penjelasan Detail `PartialType` dan Hubungannya dengan Prisma:**
+
+Kenapa kita hanya butuh satu baris kode `extends PartialType(CreateCategoryDto)`?
+Jika Anda membuka file `CreateCategoryDto`, kolom `name` dan `slug` pasti memiliki aturan wajib isi (`@IsNotEmpty()`).
+Jika Anda langsung memakai `CreateCategoryDto` untuk rute *Update*, maka pada **KASUS A** di mana *Frontend* hanya mengirim `"name"`, mesin akan berteriak *Error 400 Bad Request* karena `"slug"` tidak dikirim.
+
+Fungsi `PartialType` adalah mesin pengganda dari Swagger. Secara otomatis di dalam memori, ia menyalin isi `CreateCategoryDto` tetapi **menghapus semua aturan `@IsNotEmpty()` dan menggantinya menjadi `@IsOptional()**`.
+
+**Kaitannya dengan Prisma (`data: updateCategoryDto`):**
+Inilah alasan kenapa `PartialType` sangat penting. Di JavaScript/TypeScript, jika sebuah objek tidak memiliki suatu properti, nilainya dianggap `undefined`.
+
+* Pada **KASUS A**, wujud objek `updateCategoryDto` yang lolos ke *Service* adalah:
+`{ "name": "VGA Kencang", "description": undefined, "slug": undefined, "isActive": undefined }`
+
+Prisma ORM dirancang sangat cerdas. Saat ia melihat nilai `undefined` di dalam objek, Prisma **TIDAK AKAN** menyentuh, mengubah, atau mengosongkan kolom tersebut di *database*. Prisma akan mengabaikannya dan hanya melakukan `UPDATE` pada kolom `name` saja. Inilah efisiensi tingkat tinggi dari REST API `PATCH`.
+
+---
+
+### KODE: `category.service.ts` (Bagian Deklarasi Fungsi)
+
+```typescript
+async update(id: string, updateCategoryDto: UpdateCategoryDto): Promise<CategoryResponseDto> {
+
+```
+
+**Penjelasan Detail Baris Parameter (Signature):**
+
+1. **`async update(...)`**:
+Kata `async` wajib ada karena di dalam fungsi ini kita akan menggunakan `await` untuk menembak *database* PostgreSQL. Operasi *database* selalu butuh waktu (*Asynchronous*).
+2. **`id: string`**:
+Ini adalah parameter pertama yang ditangkap dari *Controller* (yang asalnya dari URL `@Param('id')`).
+*Wujud di memori:* `id` = `"kat-123"`.
+3. **`updateCategoryDto: UpdateCategoryDto`**:
+Ini adalah parameter kedua (yang asalnya dari `@Body()`). Isinya adalah data JSON murni dari *Frontend* yang sudah disucikan oleh mesin X-Ray DTO.
+*Wujud di memori (Misal kita pakai KASUS B):* `updateCategoryDto` = `{ "name": "VGA Kencang", "slug": "vga-kencang" }`.
+4. **`: Promise<CategoryResponseDto>`**:
+Ini adalah kontrak janji mutlak (*Output/Return Type*). Anda berjanji kepada mesin TypeScript: *"Saya pastikan, di akhir baris fungsi ini (baris return), data yang keluar wujudnya HANYA AKAN berupa objek utuh sesuai cetakan CategoryResponseDto."*
+
+---
+
+### KODE: `category.service.ts` (Fase Pengecekan Kategori Lama)
+
+```typescript
+        const existingCategory = await this.prisma.category.findUnique({
+            where: { id }
+        });
+
+```
+
+**Penjelasan Detail:**
+Sebelum menimpa data, mesin wajib tahu wujud asli data yang saat ini ada di *database*.
+
+1. **`await this.prisma.category.findUnique(...)`**:
+Mesin menembak PostgreSQL, memerintahkan pencarian satu baris data berdasarkan ID.
+2. **`where: { id }`**:
+Mesin mencari baris di tabel Kategori yang ID-nya persis `"kat-123"`.
+
+**Wujud Variabel `existingCategory` di Memori:**
+Misalkan data ditemukan, PostgreSQL mengirimkan objek JSON ini:
+
+```json
+{
+  "id": "kat-123",
+  "name": "Komponen VGA Lama",
+  "description": "Daftar kartu grafis terbaru",
+  "slug": "komponen-vga-lama",
+  "imageUrl": null,
+  "isActive": true,
+  "createdAt": "2026-06-20T10:00:00.000Z",
+  "updatedAt": "2026-06-20T10:00:00.000Z"
+}
+
+```
+
+```typescript
+        if (!existingCategory) {
+            throw new NotFoundException('Category not found with ID: ' + id);
+        }
+
+```
+
+**Penjelasan Detail Guard (Penjaga):**
+
+* **Maksudnya:** Bagaimana jika ID `"kat-123"` itu hasil karangan *hacker* atau sudah dihapus orang lain?
+* Jika tidak ada di database, `existingCategory` akan bernilai `null`.
+* Sintaks `!existingCategory` mengubah `null` menjadi `true`. Blok eksekusi berjalan, aplikasi melempar *Error 404*, dan proses `update` dibatalkan seketika.
+* Karena pada contoh kita data tersebut ada, maka `!existingCategory` bernilai `false`, dan blok ini **DILEWATI**.
+
+---
+
+Sampai di sini kita sudah memiliki dua objek di dalam memori: data baru dari *Frontend* (`updateCategoryDto`) dan data lama dari *Database* (`existingCategory`).
+
+================================================================
+
+part 4.2
+Selamat datang di **PART 4.2**, penyelesaian akhir dari pencatatan detail Anda. Di sini kita akan membedah logika perlindungan *URL/Slug*, proses `UPDATE` murni ke PostgreSQL, dan pemformatan akhirnya.
+
+Mari kita lanjutkan menggunakan dua kasus *Frontend* kita di Part 4.1:
+
+* **KASUS A:** `updateCategoryDto` = `{ "name": "VGA Kencang" }`
+* **KASUS B:** `updateCategoryDto` = `{ "name": "VGA Kencang", "slug": "vga-kencang" }`
+
+Data lama di *database* (`existingCategory`):
+
+* `slug` = `"komponen-vga-lama"`
+
+---
+
+### KODE: `category.service.ts` (Fase Pengecekan Bentrok Slug)
+
+Anda bertanya: *"Kenapa kita membandingkan slug? Untuk apa? Kenapa kolom yang lain (seperti name atau description) tidak dibandingkan?"*
+
+**Jawaban Fundamental Arsitektur Web:**
+*Slug* adalah teks yang dipakai di jalur URL (*Uniform Resource Locator*), misalnya: `https://ofclub.com/categories/vga-kencang`.
+Di dunia *database*, dua kategori **BOLEH** memiliki nama yang sama (Misal: ada kategori "VGA" di cabang Jakarta, dan "VGA" di cabang Bandung). Tapi mereka **TIDAK BOLEH SAMA SEKALI** memiliki *slug* URL yang kembar. Jika kembar, aplikasi *Frontend* akan kebingungan ( *Crash* ) saat membaca URL. Oleh karena itu, kita membuat pengamanan esktra ketat hanya untuk properti `slug` ini.
+
+```typescript
+        if (updateCategoryDto.slug && updateCategoryDto.slug !== existingCategory.slug) {
+
+```
+
+**Penjelasan Detail Sintaks Logika `&&` (DAN):**
+Mesin mengecek dua kondisi dari kiri ke kanan.
+
+* **Skenario Eksekusi KASUS A (Hanya Update Nama):**
+1. Mesin mengecek sebelah kiri: `updateCategoryDto.slug`. Karena di Kasus A *Frontend* tidak mengirimkannya, nilainya adalah `undefined`.
+2. Karena sebelah kiri sudah salah (*falsy*), mesin **TIDAK PERLU** mengecek sebelah kanan. Seluruh blok `if` ini dilewati sepenuhnya. Mesin langsung melompat ke baris `this.prisma.category.update`. (Sangat efisien!).
+
+
+* **Skenario Eksekusi KASUS B (Update Nama dan Slug):**
+1. Mesin mengecek sebelah kiri: `updateCategoryDto.slug` berisi teks `"vga-kencang"`. (Lolos / `true`).
+2. Mesin mengecek sebelah kanan: `Apakah "vga-kencang" TIDAK SAMA DENGAN "komponen-vga-lama"?`
+3. Jawabannya: Ya, berbeda! (`true`).
+4. Karena kedua sisi `true`, mesin mengeksekusi blok kode di dalam `if`.
+
+
+
+**Bagaimana Jika Frontend Mengirim Slug yang Sama Persis dengan Data Lamanya?**
+*(Misal Frontend mengirim slug "komponen-vga-lama")*
+Kondisi kanan menjadi: `Apakah "komponen-vga-lama" !== "komponen-vga-lama"?`. Hasilnya `false`. Blok `if` akan dilewati. Ini mencegah *server* melakukan pencarian *database* yang tidak berguna.
+
+---
+
+### KODE: Eksekusi Pengecekan Bentrok (Hanya jalan di Kasus B)
+
+```typescript
+            const slugTaken = await this.prisma.category.findUnique({
+                where: { slug: updateCategoryDto.slug },
+            });
+
+```
+
+* **Maksudnya:** Mesin menyuruh Prisma mengecek PostgreSQL: *"Hai Database, tolong periksa ke seluruh tabel, apakah teks slug 'vga-kencang' ini sudah dipakai oleh ID kategori lain?"*
+* **Wujud Variabel `slugTaken`:**
+* *Kemungkinan 1:* Jika belum ada yang pakai, PostgreSQL membalas kosong. `slugTaken` = `null`.
+* *Kemungkinan 2:* Jika ternyata minggu lalu ada orang yang membuat kategori "VGA Kencang", PostgreSQL akan membalas dengan objek JSON kategori milik orang tersebut. `slugTaken` = `{ "id": "kat-555", "slug": "vga-kencang", ... }`.
+
+
+
+```typescript
+            if (slugTaken) {
+                throw new ConflictException(`Category with slug ${updateCategoryDto.slug} already exists.`);
+            }
+        }
+
+```
+
+* **Maksudnya:** Jika `slugTaken` ada isinya (Kemungkinan 2 di atas), mesin langsung melempar *Error 409 Conflict* (Bentrok). *Frontend* akan menerima pesan *error*, dan proses penimpaan *database* digagalkan total demi keamanan arsitektur URL.
+
+---
+
+### KODE: `category.service.ts` (Fase Penimpaan Final ke PostgreSQL)
+
+Jika kita lolos dari semua jebakan *error* di atas, kita sampai di baris eksekusi inti.
+
+```typescript
+        const updatedCategory = await this.prisma.category.update({
+            where: { id },
+            data: updateCategoryDto,
+            include: {
+                _count: {
+                    select: { products: true }
+                },
+            },
+        });
+
+```
+
+**Penjelasan Detail:**
+
+1. **`where: { id }`**: Instruksi "Sasaran Tembak". Prisma mencari baris dengan ID `"kat-123"`.
+2. **`data: updateCategoryDto`**: Instruksi "Muatan Senjata". Prisma memasukkan isi DTO kita. Di sinilah peran `PartialType` dari Part 4.1 bersinar terang. Karena isinya cuma `{ "name": "VGA Kencang", "slug": "vga-kencang" }`, Prisma secara otomatis merakit kode SQL: `UPDATE categories SET name = 'VGA Kencang', slug = 'vga-kencang' WHERE id = 'kat-123';`. Kolom lain sama sekali tidak disentuh.
+3. **`include: { _count: ... }`**: Instruksi "Misi Sampingan". Setelah sukses menimpa, Prisma menengok ke tabel `products` dan menghitung ada berapa produk yang berelasi ke `"kat-123"`. (Katakanlah ada 5 produk).
+
+**Wujud Variabel `updatedCategory` di Memori:**
+PostgreSQL membalas perintah `update` ini dengan mengembalikan baris data terbaru yang sudah segar:
+
+```json
+{
+  "id": "kat-123",
+  "name": "VGA Kencang",                  // <-- BERHASIL DIUPDATE
+  "description": "Daftar kartu grafis terbaru", // <-- TETAP UTUH (Karena partial)
+  "slug": "vga-kencang",                  // <-- BERHASIL DIUPDATE
+  "imageUrl": null,
+  "isActive": true,
+  "createdAt": "2026-06-20T10:00:00.000Z",
+  "updatedAt": "2026-06-23T14:40:00.000Z",      // <-- OTOMATIS BERUBAH JAMNYA
+  "_count": {
+    "products": 5
+  }
+}
+
+```
+
+---
+
+### KODE: `category.service.ts` (Fase Pemformatan Return Akhir)
+
+```typescript
+        return this.formatCategory(updatedCategory, Number(updatedCategory._count.products));
+    }
+
+```
+
+* **Maksudnya:** Mesin mengeksekusi metode `this.formatCategory` (yang sudah kita bahas di penjelasan sebelumnya).
+* **Argumen Pertama:** Memasukkan objek mentah `updatedCategory` dari atas.
+* **Argumen Kedua:** Mengekstrak angka `5` dari objek tersebut, dibungkus `Number(5)` sebagai jaring pengaman TypeScript, lalu memasukkannya ke parameter `productCount`.
+
+Fungsi `formatCategory` merapikannya sesuai dengan kontrak tipe data `CategoryResponseDto`. Hasil akhir ini melesat naik ke *Controller*, dibungkus sebagai `HTTP 200 OK`, dan mendarat di layar pengguna aplikasi Anda dalam wujud JSON sempurna.
+
+Tuntas sudah seluruh rangkaian panjang pencatatan rute `PATCH` Kategori Anda! Silakan disalin, dan beri aba-aba jika Anda sudah memiliki rute yang baru.

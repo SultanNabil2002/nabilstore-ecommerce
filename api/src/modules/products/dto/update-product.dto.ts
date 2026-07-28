@@ -1,0 +1,8 @@
+/* eslint-disable prettier/prettier */
+//src/modules/products/dto/update-product.dto.ts
+//Dto for updating an existing product
+
+import { PartialType } from "@nestjs/swagger";
+import { CreateProductDto } from "./create-product.dto";
+
+export class UpdateProductDto extends PartialType(CreateProductDto) { }

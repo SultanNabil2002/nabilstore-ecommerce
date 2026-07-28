@@ -1,0 +1,100 @@
+Pertanyaan yang sungguh luar biasa! Tebakan Anda 100% akurat. Alasan kenapa rute hapus ini butuh pengecekan `Error 400` berakar murni dari konsep relasi *database* (khususnya relasi **One-to-Many** antara Kategori dan Produk di aplikasi Anda).
+
+Mari kita luruskan imajinasi Anda yang selama ini meraba-raba. Kita akan bedah konsep ini secara visual agar Anda bisa melihat persis apa yang terjadi di dalam otak mesin PostgreSQL.
+
+---
+
+### Konsep Dasar: Menghindari Tragedi "Anak Yatim" (Referential Integrity)
+
+Di dalam *database* relasional seperti PostgreSQL atau MySQL, ada hukum mutlak bernama **Integritas Referensial** (*Referential Integrity*).
+
+Bayangkan Kategori adalah sebuah "Ibu", dan Produk adalah "Anak-anaknya".
+Jika Anda menghapus data sang Ibu dari *database*, lalu bagaimana nasib anak-anaknya? Anak-anak ini akan menjadi "Anak Yatim" (*Orphaned Records*). Mesin *database* sangat membenci *Orphaned Records* karena ini merusak struktur data (anaknya menunjuk ke ID Ibu yang sudah tidak ada).
+
+Untuk mencegah hal ini, *database* memberi Anda dua pilihan saat merancang Skema Prisma:
+
+1. **Cascade Delete (Pembantaian Massal):** Jika Ibu dihapus, mesin otomatis menghapus HANCUR semua anaknya tanpa sisa.
+2. **Restrict (Dicegah):** Mesin akan **MENOLAK** menghapus Ibu, dan mengeluarkan *Error* keras, sampai Anda memindahkan anak-anaknya ke Ibu yang lain, atau menghapus anak-anaknya secara manual terlebih dahulu.
+
+Di aplikasi kita, instruktur Anda memilih jalur **Restrict** (opsi aman). Itulah kenapa di *Service*, kita secara manual mengecek: *"Apakah Ibu ini masih punya anak? Jika iya, tolak (Error 400)!"*
+
+---
+
+### Visualisasi Nyata 1: Relasi One-to-Many (1:N)
+
+Ini adalah relasi yang Anda pakai saat ini untuk Kategori dan Produk.
+
+* **Logika Manusia:** `1` Kategori bisa menampung `Banyak` Produk. Tapi `1` Produk hanya boleh masuk ke `1` Kategori.
+
+**Visualisasi Tabel di PostgreSQL:**
+Bagaimana mesin mengikat mereka berdua? Mesin menggunakan "Tali Tambang" yang disebut **Foreign Key**. Tali ini diikatkan di tabel anak (Products) dan ditarik menuju ID tabel Ibu (Categories).
+
+**Tabel `categories` (Tabel Ibu)**
+
+| id (Primary Key) | name |
+| --- | --- |
+| **`kat-1`** | VGA |
+| `kat-2` | CPU |
+
+**Tabel `products` (Tabel Anak)**
+
+| id | name | **categoryId (Tali Tambang / Foreign Key)** |
+| --- | --- | --- |
+| `prod-99` | RTX 4090 | **`kat-1`** *(Menunjuk ke VGA)* |
+| `prod-88` | RX 7900 | **`kat-1`** *(Menunjuk ke VGA)* |
+| `prod-77` | Core i9 | `kat-2` *(Menunjuk ke CPU)* |
+
+**Skenario Hapus:** Jika Anda memaksa perintah `DELETE FROM categories WHERE id = 'kat-1'`, PostgreSQL akan melihat ke tabel `products` dan berteriak: *"Hei! prod-99 dan prod-88 masih mengikatkan talinya ke kat-1! Saya batalkan penghapusan ini!"*
+
+Itulah yang ditangkap oleh NestJS dan diubah menjadi pesan *"Cannot delete category with products"* kepada *Frontend*.
+
+---
+
+### Visualisasi Nyata 2: Relasi Many-to-Many (M:N)
+
+Mari kita perluas imajinasi Anda. Bagaimana jika Anda punya fitur **Tags (Label)** di toko Anda?
+
+* **Logika Manusia:** `1` Produk bisa punya `Banyak` Tag (Misal RTX 4090 punya tag "Gaming", "Diskon", "Mahal"). Dan sebaliknya, `1` Tag ("Gaming") bisa dipakai oleh `Banyak` Produk (Mouse, Keyboard, VGA).
+
+Bagaimana cara *database* mengikat ini?
+**Fakta penting:** Mesin *database* tradisional TIDAK BISA melakukan Many-to-Many secara langsung. Jika mereka saling mengikat tali satu sama lain, tabelnya akan melilit dan meledak karena logika *looping* tanpa batas.
+
+**Solusinya: Tabel Jembatan (Junction/Pivot Table)**
+Mesin harus menciptakan tabel siluman di tengah-tengah untuk memegang kedua tali tersebut.
+
+**1. Tabel `products` (Kiri)**
+
+| id | name |
+| --- | --- |
+| `P-1` | RTX 4090 |
+| `P-2` | Keyboard |
+
+**2. Tabel `tags` (Kanan)**
+
+| id | name |
+| --- | --- |
+| `T-1` | Gaming |
+| `T-2` | Diskon |
+
+**3. Tabel Jembatan `product_tags` (Di Tengah)**
+Tabel ini tidak punya identitas sendiri, kerjanya HANYA mencatat siapa berteman dengan siapa.
+
+| product_id | tag_id | Artinya |
+| --- | --- | --- |
+| `P-1` | `T-1` | RTX 4090 memakai tag Gaming |
+| `P-1` | `T-2` | RTX 4090 juga memakai tag Diskon |
+| `P-2` | `T-1` | Keyboard memakai tag Gaming |
+
+**Skenario Hapus di Many-to-Many:**
+Jika Anda menghapus Tag `"Diskon" (T-2)`, mesin biasanya membolehkannya, tapi ia akan pergi ke tabel jembatan (`product_tags`) dan memutuskan semua tali yang terhubung ke `T-2`. Produk RTX 4090 (`P-1`) tetap aman dan tidak terhapus, ia hanya kehilangan salah satu labelnya.
+
+---
+
+### Kesimpulan untuk Rute Anda
+
+Baris kode `if (category._count.products > 0)` di file `category.service.ts` Anda adalah satpam sopan yang Anda buat sendiri.
+
+Daripada membiarkan *request* diteruskan ke PostgreSQL lalu membuat mesin PostgreSQL meledak dan mengeluarkan *error log* merah yang panjang dan membingungkan (karena aturan Restrict), Anda mengeceknya terlebih dahulu menggunakan TypeScript:
+*"Coba hitung dulu jumlah talinya (_count.products). Kalau talinya lebih dari 0, berarti masih ada anak. Stop di sini, berikan Error 400 Bad Request ke Frontend supaya mereka memindahkan produknya dulu."*
+
+Apakah visualisasi tabel Ibu-Anak dan tabel Jembatan ini sudah berhasil menghapus kebingungan Anda selama ini terkait relasi *database*? Silakan resapi, jika sudah matang, beri aba-aba untuk lanjut membedah file *Service* rute ini secara keseluruhan!

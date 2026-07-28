@@ -1,0 +1,97 @@
+/* =========================================
+   1. VARIABEL GLOBAL (MODE TERANG/DEFAULT)
+   ========================================= */
+:root {
+  /* Warna dasar website saat mode terang */
+  --background: #ffffff; /* Latar belakang putih */
+  --foreground: #171717; /* Warna teks hitam pekat */
+
+  /* Warna Utama (Primary) untuk E-commerce kamu */
+  /* Bisa dipakai untuk warna tombol keranjang, diskon, dll */
+  --primary: #de6824; /* Oranye */
+  --secondary: #8bee12;
+
+  /* borders */
+  --border: #090808;
+
+  /* errors */
+  --destructive: #c31414;
+}
+
+/* =========================================
+   2. VARIABEL GLOBAL (MODE GELAP)
+   ========================================= */
+/* Akan otomatis aktif jika laptop/HP user memakai Dark Mode */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Menimpa warna dasar menjadi gelap */
+    --background: #0a0a0a; /* Latar belakang hitam */
+    --foreground: #ededed; /* Warna teks putih terang */
+  }
+}
+
+/* =========================================
+   3. PENGATURAN TINGGI & LEBAR HALAMAN
+   ========================================= */
+html {
+  /* Memastikan elemen utama selalu mengisi 100% tinggi layar */
+  height: 100%;
+}
+
+html,
+body {
+  /* Mencegah website bisa digeser ke kanan/kiri (horizontal scroll) */
+  /* Ini masalah yang sangat sering terjadi jika ada elemen yang terlalu lebar */
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* =========================================
+   4. PENGATURAN GAYA DASAR (BODY)
+   ========================================= */
+body {
+  /* Mengambil warna latar dan teks dari variabel di atas */
+  /* Akan otomatis berubah sesuai mode Terang/Gelap pada laptop user */
+  color: var(--foreground);
+  background: var(--background);
+
+  /* Memanggil font Poppins yang sudah kita set up di file layout.tsx */
+  font-family: var(--font-poppins);
+
+  /* Membuat ujung huruf font terlihat lebih halus (anti-pixelated) di layar Mac/iOS */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* =========================================
+   5. CSS RESET UNTUK SEMUA ELEMEN (*)
+   ========================================= */
+* {
+  /* Memastikan padding & border dihitung ke dalam ukuran lebar elemen */
+  /* Ini bikin proses styling dan ukuran layout (misal kartu produk) jadi jauh lebih gampang dan masuk akal */
+  box-sizing: border-box;
+  
+  /* Menghapus jarak (margin/padding) bawaan browser yang suka bikin desain berantakan */
+  padding: 0;
+  margin: 0;
+}
+
+/* =========================================
+   6. PENGATURAN LINK (TAUTAN)
+   ========================================= */
+a {
+  /* Memaksa link mengikuti warna teks di sekitarnya (tidak otomatis biru) */
+  color: inherit;
+  /* Menghilangkan garis bawah bawaan pada link */
+  text-decoration: none;
+}
+
+/* =========================================
+   7. PENGATURAN UI BROWSER (DARK MODE)
+   ========================================= */
+@media (prefers-color-scheme: dark) {
+  html {
+    /* Memberitahu browser untuk mengubah elemen bawaan (seperti scrollbar atau input form) menjadi tema gelap */
+    color-scheme: dark;
+  }
+}

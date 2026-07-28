@@ -1,0 +1,183 @@
+1. install ekstension NextjsForDev
+
+2. bunx create-next-app@latest front | npx create-next-app@latest front
+
+3. npm run dev
+
+4. create folder (landing) di front/app/(landing) lalu pindahkan file page.tsx
+
+5. create file fonts.ts di front/app/fonts.ts (9:34)
+
+6. create folder components di front/components (14:07)
+
+7. create folder modules di front/components/modules
+
+8. create folder landing di front/components/modules/landing
+
+9. create file Header.tsx di front/components/modules/landing/Header.tsx
+
+10. create file Footer.tsx di front/components/modules/landing/Footer.tsx
+
+11. create file header.module.scss di front/components/modules/landing/header.module.scss
+
+12. npm i sass (16:34)
+
+13. npm i lucide-react (25:18)
+
+14. npm i @reduxjs/toolkit redux-persist react-redux --save (37:23)
+
+15. create folder providers di front/providers
+
+16. create file state-provider di front/providers/state-provider.tsx (38.15)
+
+17. create folder store di front/store (39:37)
+
+18. create file index.ts di front/store/index.ts (39:43)
+
+19. create file index.tsx di front/providers/index.tsx (49:55)
+
+20. create folder slices di front/store/slices (51:04)
+
+21. create authSlice.ts di front/store/slice/authSlice.ts (51:08)
+
+22. create folder types di front/types (53:01)
+
+23. create file auth.types.ts di front/types/auth.types.ts (53:12)
+
+24. create file cartSlice.ts di front/store/slice/cartSlice.ts
+
+25. create file cart.types.ts di front/types/cart.types.ts (56:05)
+
+26. create file product.types.ts di front/types/product.types.ts (57:34)
+
+27. create file category.types.ts di front/types/category.types.ts (58:44)
+
+28. create folder hooks di front/hooks (1:00:45)
+
+29. create file useAuth.ts di front/hooks/useAuth.ts (1:00:54)
+
+30. create file useCart.ts di front/hooks/useCart.ts (1:00:57)
+
+31. create folder services di front/services (1:07:43)
+
+32. create folder api di front/services/api (1:07:45)
+
+33. create file auth.service.ts di front/services/api/auth.service.ts (1:07:54)
+
+34. create file axios.config.ts di front/services/api/axios.config.ts (1:08:44)
+
+35. npm i axios (1:09:00)
+
+36. create file .env di front/.env (1:09:56)
+
+37. create file ProductList.tsx di front/components/modules/landing/ProductList.tsx (1:18:44)
+
+38. create file product-list.module.scss di front/components/modules/landing/product-list.module.scss (1:19:31)
+
+39. create file useProducts.ts di front/hooks/useProducts.ts (1:28:24)
+
+40. create file ProductCard.tsx di front/components/modules/landing/ProductCard.tsx (1:31:41)
+
+41. create file product-card.module.scss di front/components/modules/landing/product-card.module.scss (1:32:41)
+
+42. create file product.service.ts di front/services/api/product.service.ts (1:37:42)
+
+43. update file next.config.ts di front/next.config.ts (1:46:19)
+
+44. create folder (product) di front/app/(product) (2:17:42)
+
+45. create file [id] di front/app/(product)/[id] (2:17:49)
+
+46. create file page.tsx di front/app/(product)/[id]/page.tsx (2:17:50)
+
+47. create folder product di front/components/modules/product (2:18:38)
+
+48. create file ProductDetailClient.tsx di front/components/modules/product/ProductDetailClient.tsx (2:18:44)
+
+49. create file Breadcrumbs.tsx di front/components/modules/product/Breadcrumbs.tsx (2:19:16)
+
+50. create file breadcrumbs.module.scss di front/components/modules/product/breadcrumbs.module.scss (2:20:03)
+
+51. create file product-detail-client.module.scss front/components/modules/product/product-detail-client.module.scss (2:28:12)
+
+52. create file ProductDetail.tsx di front/components/modules/product/ProductDetail.tsx (2:34:02)
+
+53. create file product-detail.module.scss di front/components/modules/product/product-detail.module.scss (2:38:14)
+
+54. create file SimilarProducts.ts di front/components/modules/product/SimilarProducts.ts (3:08:14)
+
+55. create file similar-products.module.scss di front/components/modules/product/similar-products.module.scss (3:09:29)
+
+56. create folder cart di front/app/cart (3:33:43)
+
+57. create file page.tsx di front/app/cart/page.tsx (3:33:45)
+
+58. create folder cart di front/components/modules/cart (3:34:52)
+
+59. create file CartClient.tsx di front/components/modules/cart/CartClient.tsx (3:35:04)
+
+60. create file cart.module.scss di front/components/modules/cart/cart.module.scss (3:37:10)
+
+61. create file CartItem.tsx di front/components/modules/cart/CartItem.tsx (3:41:39)
+
+62. create file cart-item.module.scss di front/components/modules/cart/cart-item.module.scss (3:43:17)
+
+63. create folder checkout di front/app/checkout (4:40:11)
+
+64. create file page.tsx di front/app/checkout/page.tsx (4:40:13)
+
+65. create folder checkout di front/components/modules/checkout (4:40:44)
+
+66. create file CheckoutClient.tsx di front/components/modules/checkout/CheckoutClient.tsx (4:40:45)
+
+67. create file CheckoutHeader.tsx di front/components/modules/checkout/CheckoutHeader.tsx (4:41:38)
+
+68. create file CheckoutSteps.tsx di front/components/modules/checkout/CheckoutSteps.tsx (4:41:46)
+
+69. create file checkout.module.scss di front/components/modules/checkout/checkout.module.scss (4:42:17)
+
+70. create file PaymentMethodCard.tsx di front/components/modules/checkout/PaymentMethodCard.tsx (4:49:42)
+
+80. create file payment-method-card.module.scss di front/components/modules/checkout/payment-method-card.module.scss (4:50:20)
+
+81. npm i framer-motion (4:55:49)
+
+82. create file usePayment.ts di front/hooks/usePayment.ts (5:02:26)
+
+83. create file payment.types.ts di front/types/payment.types.ts (5:03:46)
+
+84. create file payment.service.ts di front/service/api/payment.service.ts (5:05:38)
+
+85. create file stripe-payment-form.tsx di front/components/modules/checkout/stripe-payment-form.tsx (5:15:37)
+
+86. npm i @stripe/react-stripe-js (5:16:32)
+
+87. npm i @stripe/stripe-js (5:17:43)
+
+88. Tutorial Stripe Pembuatan Akun (5:18:27)
+
+89. create file orders.types.ts di front/types/orders.types.ts (5:25:43)
+
+90. create file useOrder.ts di front/hooks/useOrder.ts (5:29:58)
+
+91. create file cart.service.ts di front/services/api/cart.service.ts (5:34:33)
+
+92. create file order.service.ts di front/services/api/order.service.ts (5:38:55)
+
+93. create file stripe-payment-form.module.scss di front/components/modules/checkout/stripe-payment-form.module.scss (1:18:20)
+
+94. create folder auth di front/app/auth (6:22:10)
+
+95. create folder login di front/app/auth/login (6:22:13)
+
+96. create file page.tsx di front/app/auth/login/page.tsx (6:22:15)
+
+97. create folder auth di front/components/modules/auth (6:22:43)
+
+98. create file LoginForm.tsx di front/components/modules/auth/LoginForm.tsx (6:22:49)
+
+99. create file login-form.module.scss di front/components/modules/auth/login-form.module.scss (6:23:57)
+
+100. 
+
+

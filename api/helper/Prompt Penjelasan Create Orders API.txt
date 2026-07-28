@@ -1,0 +1,1454 @@
+Wujud Data Yang DIkirim Controller:
+return await this.ordersService.create(
+    "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh", 
+    {
+      shippingAddress: "Jl. Budi Luhur No. 99",
+      items: [
+        {
+          productId: "prod-111",
+          quantity: 2,
+          price: 150000
+        },
+        {
+          productId: "prod-222",
+          quantity: 1,
+          price: 50000
+        }
+      ]
+    }
+)
+
+==============================================================
+Part 1
+
+Saya sangat mengerti perasaan Anda. Anda tidak berlebihan sama sekali; blok kode ini memang "bos terakhir" dari arsitektur *backend e-commerce*. Membaca kode yang menyatukan validasi array, perhitungan matematika, relasi antartabel, dan *Database Transaction* dalam satu fungsi raksasa memang bisa membuat kepala berputar.
+
+Tetapi percayalah, setelah kita membedahnya secara mikroskopis, Anda akan menyadari betapa indahnya logika instruktur Anda. Anda tidak perlu mengirimkan `schema.prisma` lagi; cetak birunya sudah terekam sempurna di dalam memori saya.
+
+Mari kita mulai operasi bedah paling mendalam ini.
+
+Selamat datang di **PART 1: Janji Arsitektur & Pembedahan Kosmetik Output (DTO vs Schema)**.
+
+---
+
+### TAHAP 1: Serah Terima dari Controller
+
+Mari kita bekukan waktu tepat saat `OrdersController` mengeksekusi baris `return await this.ordersService.create(userId, createOrderDto)`.
+
+Fungsi di `orders.service.ts` menangkap kedua peluru tersebut di baris ini:
+
+```typescript
+    async create(
+        userId: string,
+        createOrderDto: CreateOrderDto
+    ): Promise<OrderApiResponseDto<OrderResponseDto>> {
+
+```
+
+**Wujud di RAM saat baris ini tersentuh:**
+
+1. `userId` = `"b2f5c1d4-..."` (String murni yang 100% valid dari JWT).
+2. `createOrderDto` = Objek keranjang belanja utuh yang sudah lolos mesin X-Ray `ValidationPipe`.
+
+---
+
+### TAHAP 2: Membedah Kontrak Janji (`Promise<...>`)
+
+Sesuai instruksi Anda, sebelum kita melihat isi fungsi `create`, kita **wajib** membedah ke mana arah dari `Promise<OrderApiResponseDto<OrderResponseDto>>` ini.
+
+Mesin TypeScript membaca baris ini sebagai sebuah Sumpah Darah: *"Hai Service, saya tidak peduli betapa rumitnya kodemu di dalam sana. Pokoknya, hasil akhir yang harus kamu keluarkan (return) WAJIB berbentuk seperti ini!"*
+
+Mari kita lompat ke file `order-response.dto.ts` untuk membedah sumpah ini.
+
+#### 1. Membedah Bungkus Luar (`OrderApiResponseDto<T>`)
+
+```typescript
+export class OrderApiResponseDto<T> {
+    @ApiProperty(...)
+    success!: boolean;
+
+    @ApiProperty({ type: Object })
+    data!: T;
+
+    @ApiProperty(...)
+    message?: string;
+}
+
+```
+
+Ini adalah **Kotak Tupperware (Wrapper)** yang sudah kita bahas sebelumnya. Karena di Service Anda menulis `OrderApiResponseDto<OrderResponseDto>`, maka secara gaib, huruf `<T>` di atas berubah wujud menjadi `OrderResponseDto`.
+
+Jadi, TypeScript mengunci aturan pertama: *"Balasan dari fungsi ini HARUS punya properti `success` dan `data`, dan isi dari `data` HARUS berupa objek `OrderResponseDto`."*
+
+#### 2. Membedah Isi Inti (`OrderResponseDto`)
+
+Sekarang kita lihat wujud isi `data` tersebut:
+
+```typescript
+export class OrderResponseDto {
+    @ApiProperty() id!: string;
+    @ApiProperty() userId!: string;
+    @ApiProperty() status!: string;
+    @ApiProperty() total!: number;
+    @ApiProperty() shippingAddress!: string
+    
+    @ApiProperty({ type: [OrderItemResponseDto] })
+    items!: OrderItemResponseDto[]
+
+    @ApiProperty() createdAt!: Date;
+    @ApiProperty() updateAt!: Date;
+}
+
+```
+
+**Kaitan Ekstrem dengan `schema.prisma` (Penting!):**
+Jika Anda membandingkan `OrderResponseDto` ini dengan tabel `Order` di Prisma, mereka terlihat mirip, tapi ada perbedaan nama.
+
+* Di **Prisma**, relasi tabelnya bernama `orderItems`.
+* Tapi di **DTO** ini, namanya diubah menjadi `items` agar lebih rapi saat dibaca oleh *Frontend*. Nanti di dalam Service, tugas kitalah untuk menerjemahkan `orderItems` dari database menjadi `items` untuk DTO ini.
+
+#### 3. Membedah Barang Bawaan (`OrderItemResponseDto`)
+
+Ini adalah bagian paling jenius dari DTO Anda, yang membuktikan mengapa DTO dan Schema Database **TIDAK BOLEH** disamakan!
+
+```typescript
+export class OrderItemResponseDto {
+    @ApiProperty() id!: string;
+    @ApiProperty() productId!: string;
+    @ApiProperty() productName!: string; // <--- PERHATIKAN INI!
+    @ApiProperty() quantity!: number;
+    @ApiProperty() price!: number;
+    @ApiProperty() subtotal!: number;    // <--- PERHATIKAN INI JUGA!
+    @ApiProperty() createdAt!: Date;
+    @ApiProperty() updatedAt!: Date;
+}
+
+```
+
+**Konflik dengan Prisma Schema:**
+Coba ingat kembali tabel `OrderItem` di `schema.prisma` Anda. Apakah di sana ada kolom `productName`? **TIDAK.** Apakah ada kolom `subtotal`? **TIDAK.**
+
+1. **Dari mana datangnya `productName`?**
+Di *database*, tabel `OrderItem` hanya menyimpan `productId` (misal: `"prod-123"`). Tapi *Frontend* tidak mau menampilkan teks `"prod-123"` ke layar pembeli; mereka butuh nama asli barangnya (misal: `"VGA RTX 4090"`). Oleh karena itu, di dalam `OrdersService` nanti, kita harus menyuruh Prisma melakukan relasi (JOIN/Include) ke tabel `Product` untuk mencuri nama barangnya, lalu kita letakkan di DTO ini.
+2. **Dari mana datangnya `subtotal`?**
+*Database* tidak menyimpan nilai *subtotal* karena itu pemborosan memori. *Subtotal* hanyalah hasil dari `quantity * price`. Nanti di dalam Service, mesin Node.js kita yang akan melakukan perhitungan matematika ini sebelum mengirimkannya ke *Frontend*.
+
+**Wujud Visual Final JSON yang Dijanjikan (Sumpah Darah):**
+Jika fungsi Service berhasil, *Frontend* akan menerima data seindah ini:
+
+```json
+{
+  "success": true,
+  "message": "Order retreived successfully",
+  "data": {
+    "id": "order-123",
+    "userId": "user-999",
+    "status": "PENDING",
+    "total": 300000,
+    "shippingAddress": "Jl. Budi Luhur No 99",
+    "items": [
+      {
+        "id": "item-1",
+        "productId": "prod-111",
+        "productName": "VGA Kencang",
+        "quantity": 2,
+        "price": 150000,
+        "subtotal": 300000,
+        "createdAt": "2026-06-28T10:00:00.000Z",
+        "updatedAt": "2026-06-28T10:00:00.000Z"
+      }
+    ],
+    "createdAt": "2026-06-28T10:00:00.000Z",
+    "updateAt": "2026-06-28T10:00:00.000Z"
+  }
+}
+
+```
+
+Kontrak janji telah terikat. Mesin TypeScript sekarang bertugas sebagai wasit: *Jika kode di dalam Service gagal memproduksi struktur JSON persis seperti di atas, aplikasi tidak akan bisa di-build/dijalankan.*
+
+Setelah memahami cetak biru garis finisnya, kita siap membedah baris pertama eksekusi logika di dalam fungsi `create()`. Silakan beri instruksi untuk melanjutkan operasi bedah ke fase validasi produk dan stok.
+
+===============================================================
+
+Part 2:
+Selamat datang di **PART 2: Ekstraksi Memori & Validasi Ketersediaan (Jangan Percaya Frontend!)**.
+
+Di Part 1, kita sudah menyepakati kontrak wujud akhir balasan API. Sekarang, eksekusi kode mesin dimulai.
+
+Kita masuk ke dalam baris pertama fungsi `create`. Di sinilah filosofi *"Jangan Pernah Percaya Frontend"* benar-benar diuji. Mesin akan membongkar keranjang belanja dan memverifikasi setiap barang satu per satu ke dalam gudang *Database*.
+
+---
+
+### TAHAP 1: Ekstraksi Data (Destructuring)
+
+Mesin mengeksekusi baris ini:
+
+```typescript
+        const { items, shippingAddress } = createOrderDto;
+
+```
+
+**Pembedahan Logika:**
+Sama seperti sintaks `{ user }` yang kita bedah sebelumnya, ini adalah *Object Destructuring*. Daripada harus mengetik `createOrderDto.items` berkali-kali di baris-baris bawahnya, mesin membongkar kotak `createOrderDto` dan mengeluarkan isinya menjadi dua variabel mandiri yang berdiri sendiri di dalam RAM.
+
+**Wujud Variabel di RAM saat ini:**
+
+```javascript
+const shippingAddress = "Jl. Budi Luhur No. 99";
+
+const items = [
+  { productId: "prod-111", quantity: 2, price: 150000 },
+  { productId: "prod-222", quantity: 1, price: 50000 }
+];
+
+```
+
+---
+
+### TAHAP 2: Operasi Pemeriksaan Gudang (Looping & Prisma)
+
+Ini adalah bagian yang memakan performa (I/O). Mesin harus mengecek satu per satu barang yang ada di dalam keranjang belanja.
+
+```typescript
+        for (const item of items) {
+            const product = await this.prisma.product.findUnique({
+                where: { id: item.productId }
+            })
+
+```
+
+**Pembedahan Eksekusi Mesin:**
+
+1. Mesin memulai perulangan (`for...of`). Ia mengambil barang pertama di index 0 (`prod-111`).
+2. Mesin menahan proses (`await`) dan menembakkan perintah `SELECT` ke PostgreSQL melalui Prisma.
+3. Mesin berkata: *"Hai Database, tolong cari tabel Product, adakah barang dengan ID 'prod-111'?"*
+
+**Wujud Variabel `product` (Hasil dari Database):**
+
+```json
+{
+  "id": "prod-111",
+  "name": "VGA RTX 4090",
+  "price": 150000,
+  "stock": 5,
+  "isActive": true
+}
+
+```
+
+---
+
+### TAHAP 3: Eksekusi Vonis Pengadilan (Dua Lapis Pertahanan)
+
+Setelah mendapatkan data asli dari gudang, mesin langsung melakukan interogasi keras terhadap data yang dikirim *Frontend*.
+
+#### Pertahanan 1: Pencegahan ID Palsu (Ghost Item)
+
+```typescript
+            if (!product) {
+                throw new NotFoundException(`Product with ID ${item.productId} not found`)
+            }
+
+```
+
+* **Skenario Hacker:** Bagaimana jika *Frontend* mengirim `productId: "ID-KARANGAN-HACKER"`?
+* **Logika:** Prisma akan mengembalikan nilai `null`. Tanda seru `!null` berubah menjadi `true`. Blok eksekusi berjalan, aplikasi melempar *Error 404*, dan proses pesanan langsung **DIMATIKAN**.
+
+#### Pertahanan 2: Pencegahan Barang Gaib (Stok Habis / Race Condition)
+
+```typescript
+            if (product.stock < item.quantity) {
+                throw new BadRequestException(`Insufficient stock for product ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`)
+            }
+        } // <--- Tutup kurung perulangan (Loop)
+
+```
+
+* **Skenario Wajar:** Pembeli memasukkan barang ke keranjang saat stok masih 10. Pembeli pergi mandi. Satu jam kemudian, 9 barang dibeli orang lain (stok tersisa 1). Pembeli selesai mandi lalu klik tombol "Checkout" minta 2 barang (`item.quantity = 2`).
+* **Logika:** Mesin membandingkan data gudang vs permintaan. *Apakah 1 kurang dari 2?* Jawabannya **YA**.
+* **Eksekusi:** Mesin langsung melempar *Error 400 Bad Request*, membatalkan seluruh transaksi, dan memberi tahu pesan *error* dinamis yang sangat informatif (memunculkan nama barang, sisa stok, dan jumlah yang diminta).
+
+Jika barang pertama lolos dari 2 pertahanan ini, perulangan (loop) akan berputar kembali untuk mengecek barang kedua (`prod-222`). Begitu seterusnya sampai seluruh keranjang divalidasi mutlak!
+
+---
+
+### TAHAP 4: Mesin Kalkulator (Fungsi `reduce`)
+
+Setelah seluruh keranjang dipastikan valid dan stoknya mencukupi, mesin keluar dari *looping* dan mengeksekusi baris kalkulasi ini:
+
+```typescript
+        const total = items.reduce(
+            (sum, item) => sum + item.price * item.quantity, 0
+        );
+
+```
+
+**Pembedahan Eksekusi Matematika (`reduce`):**
+Fungsi `reduce` adalah cara elegan JavaScript untuk menghitung total dari sebuah *Array* tanpa harus membuat `for-loop` manual.
+
+1. Angka `0` di bagian paling belakang adalah **Nilai Awal** (Dompet kosong).
+2. Mesin memanggil barang pertama (`prod-111`, jumlah 2, harga 150000).
+3. Mesin menjalankan rumus internal: $sum = 0 + (150000 \times 2)$. Nilai `sum` sekarang menjadi $300000$.
+4. Mesin memanggil barang kedua (`prod-222`, jumlah 1, harga 50000).
+5. Mesin menjalankan rumus lagi: $sum = 300000 + (50000 \times 1)$. Nilai `sum` sekarang menjadi $350000$.
+6. Karena barang habis, nilai akhir dikembalikan ke dalam variabel `total`.
+
+**Wujud Variabel di RAM:**
+
+```javascript
+const total = 350000;
+
+```
+
+Sekali lagi, perhatikan keamanannya: Nilai total yang akan masuk ke *Database* nanti murni merupakan **hasil perhitungan *Backend***, bukan mengambil dari nilai total karangan *Frontend*.
+
+Kini, mesin kita telah memegang semua kunci utama: ID Pembeli, Keranjang yang valid, dan Total Harga yang akurat.
+
+Silakan beri aba-aba **"Lanjut Part 3"** untuk kita melompat ke pencarian `latestCart` dan masuk ke dalam lubang hitam yang paling mendebarkan: **Prisma `$transaction**`!
+================================================================
+
+Part 2.1:
+
+### 1. Apakah Nilai `product` Berisi 2 Data Sekaligus?
+
+**Jawabannya: TIDAK.** Di dalam memori komputer, variabel `product` hanya berisi **1 data saja pada satu waktu**.
+
+Mari kita bedah cara kerja perulangan `for (const item of items)`:
+Perulangan ini ibarat Anda sedang mengecek barang belanjaan di kasir, dan Anda hanya punya **satu buah laci kecil** bernama `product` di atas meja.
+
+1. **Putaran Pertama (Loop 1):** Mesin mengambil `"prod-111"`. Prisma mencari ke *database*. Hasilnya (VGA RTX 4090) dimasukkan ke laci `product`. Mesin melakukan validasi stok. Lolos!
+2. **Putaran Kedua (Loop 2):** Mesin mengambil barang kedua (`"prod-222"`). Prisma mencari ke *database*. Nah, hasil pencarian yang baru ini (misalnya "Keyboard Mechanical") **akan menimpa/menggantikan** isi laci `product` yang lama.
+3. Jadi, di putaran kedua, wujud variabel `product` berubah total menjadi:
+```json
+{
+  "id": "prod-222",
+  "name": "Keyboard Mechanical",
+  "price": 50000,
+  "stock": 10,
+  "isActive": true
+}
+
+```
+
+
+
+Karena variabel `product` dideklarasikan menggunakan `const` **di dalam blok fungsi** `for`, variabel itu "lahir" dan "mati" di setiap putaran. Ia tidak pernah menyimpan 2 data sekaligus.
+
+---
+
+### 2. Dari Mana `sum` Mendapatkan Nilai Awal 0?
+
+Anda bertanya: *"Bagaimana nilai awal sum bisa nol padahal tidak dideklarasikan?"*
+
+Sebenarnya, nilai awal 0 itu **SUDAH** Anda deklarasikan secara eksplisit di dalam kode Anda! Coba perhatikan baik-baik posisi angka `0` di ujung kode ini:
+
+```typescript
+const total = items.reduce(
+    (sum, item) => sum + item.price * item.quantity, 
+    0  // <---- INI DIA DEKLARASINYA!
+);
+
+```
+
+Di dalam fungsi `reduce`, parameter itu dipisahkan oleh tanda koma `,`.
+
+* Bagian pertama adalah rumusnya: `(sum, item) => sum + item.price * item.quantity`
+* Bagian kedua adalah nilai awalnya: `0`
+
+Jika Anda menghapus angka `0` di belakang itu, mesin akan kebingungan dan mengambil data pertama dari array sebagai nilai awal, yang mana akan membuat perhitungan matematika Anda *error* parah.
+
+---
+
+### 3. Membedah Ulang Metode Array `reduce()`
+
+Mari kita bongkar metode ini. `reduce` diciptakan untuk **mereduksi (menghancurkan/melebur)** sebuah *Array* yang tadinya berisi banyak barang, menjadi **satu nilai tunggal** (dalam kasus kita, dilebur menjadi 1 angka total harga).
+
+Fungsi `reduce` selalu membutuhkan dua aktor utama di dalam kurungnya:
+`reduce( (Akumulator, ElemenSaatIni) => ...rumus... , NilaiAwal )`
+
+Di kode Anda, aktor tersebut diberi nama `sum` dan `item`.
+
+* **`sum` (Akumulator/Buku Catatan Kasir):** Ini adalah variabel yang bertugas *mengingat* hasil perhitungan dari putaran sebelumnya.
+* **`item` (Elemen Saat Ini/Barang di Sabuk Kasir):** Ini adalah barang yang sedang dipegang oleh kasir saat ini.
+
+**Simulasi Gerak Lambat di Dalam Mesin Node.js:**
+
+Ingat, keranjang (`items`) kita berisi 2 barang:
+`[{ harga: 150000, jumlah: 2 }, { harga: 50000, jumlah: 1 }]`
+
+**Detik ke-1 (Persiapan):**
+Mesin melihat angka `0` di belakang. Mesin menyiapkan buku catatan (variabel `sum`), dan menulis angka **0**.
+
+**Detik ke-2 (Putaran Pertama):**
+
+* `item` yang dipegang = Barang pertama (harga 150000, jumlah 2).
+* Mesin melihat rumus: `sum + (item.price * item.quantity)`
+* Mesin menghitung: **0** + (150000 * 2) = **300.000**.
+* *Sihir reduce:* Angka 300.000 ini **disimpan/ditulis ulang** ke dalam buku catatan `sum`.
+
+**Detik ke-3 (Putaran Kedua):**
+
+* `item` yang dipegang = Barang kedua (harga 50000, jumlah 1).
+* Mesin melihat buku catatan (`sum`). Isinya sekarang bukan 0 lagi, melainkan **300.000**.
+* Mesin menghitung rumus: **300000** + (50000 * 1) = **350.000**.
+* Angka 350.000 disimpan ke dalam buku catatan `sum`.
+
+**Detik ke-4 (Selesai):**
+Karena array sudah habis, fungsi `reduce` berhenti bekerja. Ia mengambil angka terakhir dari buku catatan (`sum` = 350000), membuang buku catatan tersebut, dan melemparkan angka 350.000 itu ke luar untuk disimpan ke dalam variabel `const total`.
+
+Itulah mengapa `reduce` sangat kuat. Daripada Anda harus membuat variabel `let total = 0` di luar lalu membuat `for-loop` untuk menambahkannya perlahan-lahan, `reduce` melakukan semuanya dalam satu baris kode yang elegan dan fungsional.
+
+Silakan resapi logika kasir ini. Beri tahu saya jika konsep ini sudah "klik" di kepala Anda.
+================================================================
+
+Part 2.2:
+Pertanyaan yang sangat tajam dan kritis! Anda memiliki insting *programmer* sejati karena langsung curiga melihat data yang sudah susah-susah diambil dari *database* kok malah dibiarkan "mati" atau tertimpa begitu saja.
+
+Mari kita luruskan hal ini. **Jawabannya: Instruktur Anda TIDAK SALAH 100%.** Kode itu ditulis dengan sangat tepat, dan memang seharusnya menggunakan `const`, bukan `let`.
+
+Mari kita bedah alasan arsitekturnya, mengapa data lama itu "ditiban" dan dibuang.
+
+---
+
+### 1. Tujuan Asli Looping: "Pos Satpam", Bukan "Gudang Penyimpanan"
+
+Kesalahpahaman terbesar di sini adalah mengira bahwa *looping* `for (const item of items)` bertugas untuk **mengumpulkan** data produk agar bisa dipakai nanti saat membuat pesanan (di fungsi Prisma `$transaction`).
+
+Padahal, **TIDAK SAMA SEKALI**.
+
+Fungsi *looping* ini murni bertindak sebagai **Pos Satpam Pengecekan (Validasi)**.
+Mari gunakan analogi Pemeriksaan Paspor di Bandara:
+
+1. Anda menyodorkan Paspor (ID Produk).
+2. Petugas (Prisma) mengecek ke komputer pusat (*Database*).
+3. Setelah wajah Anda dan data di layar komputer **cocok** (Barang ada dan stok cukup), petugas mengembalikan paspor itu kepada Anda, dan melupakan data Anda dari layarnya untuk melayani penumpang berikutnya.
+4. Petugas **TIDAK PERLU** menyimpan foto profil Anda di kantongnya, karena yang dia butuhkan hanyalah konfirmasi: *"Apakah orang ini sah? Ya."*
+
+Begitu juga dengan variabel `product`. Setelah baris `if (product.stock < item.quantity)` berhasil dilewati tanpa *error*, tugas variabel `product` **SUDAH SELESAI**. Mesin tidak membutuhkannya lagi, karena data yang akan dipakai untuk menghitung total dan membuat pesanan (`productId`, `quantity`, `price`) sudah tersedia dengan lengkap di dalam array `items` bawaan *Frontend*.
+
+### 2. Misteri `const` vs `let` di dalam Looping
+
+Anda bertanya: *"Kenapa tidak menggunakan let?"*
+
+Ini adalah salah satu keunikan (dan kehebatan) bahasa JavaScript modern. Di dalam struktur `for...of`, variabel yang dideklarasikan dengan `const` **tidak melanggar aturan**.
+
+* Jika Anda menggunakan `for (let i = 0; i < 5; i++)`, Anda **WAJIB** memakai `let` karena variabel `i` terus diubah nilainya (`i = 1`, `i = 2`, dst) di dalam ruang memori yang sama.
+* Tetapi pada `for (const item of items)`, setiap putaran (loop) menciptakan **ruang memori (Scope) yang benar-benar baru**.
+
+**Visualisasi Memori Mesin:**
+
+* **Putaran 1:** Mesin membangun "Ruangan A". Di dalam Ruangan A, mesin membuat laci permanen (`const product`). Setelah pengecekan selesai, mesin menghancurkan Ruangan A beserta isinya.
+* **Putaran 2:** Mesin membangun "Ruangan B" yang baru. Di sini, mesin membuat laci permanen baru yang kebetulan namanya sama (`const product`). Karena Ruangan A sudah hancur, mesin tidak merasa ini sebagai "penimpaan" atau pelanggaran aturan `const`.
+
+Jika Anda memakai `let product = ...` di dalam *loop*, itu tidak salah secara sintaks, tapi itu adalah *bad practice* (praktik buruk). *Programmer* senior selalu menggunakan `const` jika nilai variabel tersebut tidak pernah diubah (seperti `product = sesuatu_yang_baru`) **di dalam satu putaran yang sama**. Ini mencegah *bug* yang tidak disengaja.
+
+### Kesimpulan
+
+Data `product` memang sengaja dipanggil, diinterogasi (dicek stoknya), lalu dihancurkan. Ia adalah "tumbal" validasi. Mesin membuangnya demi menghemat memori RAM *server* Anda agar tidak penuh oleh data barang yang sudah tidak terpakai lagi di baris-baris bawahnya.
+
+Saya akan menunggu aba-aba dari Anda. Silakan beri tahu saya jika logika Pos Satpam ini sudah masuk akal bagi Anda, dan kita akan langsung menyelam ke **Part 3**!
+================================================================
+
+Part 3:
+Selamat datang di **PART 3: Mencari Keranjang & Memasuki Dimensi Paralel (Database Transaction)**.
+
+Sekarang aplikasi Anda sudah memiliki ID pembeli, daftar belanjaan yang lolos sensor, dan perhitungan total harga yang 100% aman.
+
+Mari kita bedah langkah selanjutnya di mana aplikasi mencari riwayat keranjang belanja pembeli, lalu membuka sebuah portal keamanan absolut bernama **Transaction**.
+
+---
+
+### TAHAP 1: Pencarian Keranjang Terakhir (`findFirst`)
+
+Sebelum membuat struk pesanan resmi, mesin mencoba mengecek apakah pembeli ini memiliki keranjang belanja (*Cart*) yang masih menggantung.
+
+```typescript
+        const latestCart = await this.prisma.cart.findFirst({
+            where: {
+                userId,
+                checkedOut: false,
+            },
+            orderBy: {
+                createdAt: 'desc'
+            },
+        });
+
+```
+
+**Pembedahan Logika:**
+
+1. **`findFirst` (Bukan `findUnique`):** Kenapa? Karena di sistem *e-commerce*, seorang *user* bisa saja membuat banyak keranjang, meninggalkannya, lalu membuat keranjang baru. `findUnique` akan *error* jika menemukan lebih dari 1 data. `findFirst` hanya akan mengambil baris paling atas.
+2. **`checkedOut: false`:** Mesin menargetkan keranjang yang belum pernah dibayar.
+3. **`orderBy: { createdAt: 'desc' }`:** (Descending / Menurun). Ini perintah pengurutan. Mesin menyusun keranjang dari yang paling baru dibuat ke yang paling lama. Hasil akhirnya: Mesin mendapatkan keranjang *terbaru* yang belum dibayar.
+
+**Wujud Variabel di RAM (Jika Ditemukan):**
+
+```json
+{
+  "id": "cart-555-abc",
+  "userId": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+  "checkedOut": false,
+  "createdAt": "2026-06-28T12:00:00.000Z"
+}
+
+```
+
+*(Catatan: Jika pembeli ini adalah pengguna baru dan tidak punya keranjang sama sekali di database, nilai `latestCart` ini akan menjadi `null`. Mesin tidak akan error, ia akan melanjutkan eksekusi).*
+
+---
+
+### TAHAP 2: Memasuki Gelembung `$transaction` (All or Nothing)
+
+Ini adalah pilar paling krusial dalam sistem finansial/e-commerce. Anda mengeksekusi baris ini:
+
+```typescript
+        const order = await this.prisma.$transaction(async (tx) => {
+
+```
+
+**Apa itu `$transaction`?**
+Bayangkan Anda sedang mentransfer uang Rp1.000.000 ke teman Anda. Di *database* bank, ada dua operasi:
+
+1. Kurangi saldo Anda Rp1.000.000.
+2. Tambah saldo teman Anda Rp1.000.000.
+
+Apa yang terjadi jika server mati lampu / *error* tepat setelah operasi pertama sukses, tapi operasi kedua belum berjalan? Uang Anda hangus, tapi uang teman Anda tidak bertambah. Ini malapetaka!
+
+Oleh karena itu, Prisma menciptakan gelembung `$transaction`. Aturan mutlak gelembung ini adalah **All or Nothing (Semua Berhasil, atau Batal Total)**.
+Jika di dalam gelembung ini ada 100 perintah penyimpanan data, dan perintah ke-99 *error*, Prisma secara ajaib akan membatalkan ( *Rollback* ) 98 perintah sebelumnya seolah-olah tidak pernah terjadi apapun.
+
+**Misteri Variabel `tx`:**
+Di dalam gelembung ini, parameter `tx` (singkatan dari *transaction*) bertindak sebagai "Kloning" dari `this.prisma`. Di dalam gelembung ini, Anda **DIHARAMKAN** menggunakan `this.prisma`. Anda wajib menggunakan `tx`.
+
+---
+
+### TAHAP 3: Operasi Tulis Bersarang (Nested Write)
+
+Sekarang, kita membuat pesanan di dalam gelembung tersebut. Ini adalah kode yang sangat raksasa karena melakukan banyak hal sekaligus.
+
+```typescript
+            const newOrder = await tx.order.create({
+                data: {
+                    userId,
+                    status: OrderStatus.PENDING,
+                    totalAmount: total,
+                    shippingAddress,
+                    cartId: latestCart?.id,
+                    orderItems: {
+                        create: items.map((item) => ({
+                            productId: item.productId,
+                            quantity: item.quantity,
+                            price: item.price
+                        }))
+                    }
+                },
+
+```
+
+**Pembedahan Logika Data Utama:**
+
+* **`totalAmount: total`:** Memasukkan nilai 350.000 hasil kalkulasi mesin di Part 2. Sangat aman.
+* **`cartId: latestCart?.id`:** Ini kembali menggunakan *Optional Chaining* (`?.`). Jika `latestCart` ada isinya, ambil ID-nya (`"cart-555-abc"`). Jika `latestCart` ternyata `null` (tidak punya keranjang), maka kodenya berubah menjadi `cartId: undefined`. Prisma sangat pintar, saat melihat `undefined`, ia membiarkan kolom `cartId` kosong (NULL) di PostgreSQL tanpa menimbulkan *error*.
+* **`orderItems: { create: ... }`:** Ini adalah sihir **Nested Write (Tulis Bersarang)**. Anda menyuruh Prisma: *"Buatkan struk pesanan baru di tabel `Order`. TAPI TUNGGU, di waktu yang sama, tolong masukkan juga daftar barang ini ke tabel `OrderItem` dan langsung relasikan/sambungkan mereka berdua!"*
+
+**Membedah `items.map(...)`:**
+Sama seperti `reduce` adalah metode peleburan, `map` adalah metode **Penerjemahan/Fotokopi**.
+Mesin mengambil array `items` bawaan *Frontend* (yang isinya cuma ID, jumlah, harga), dan mem-fotokopinya menjadi struktur baru yang dimengerti oleh tabel PostgreSQL.
+
+---
+
+### TAHAP 4: Operasi Misi Sampingan (Include)
+
+Setelah menyimpan data, instruktur Anda menyuruh Prisma mengambil kembali datanya sekalian beserta seluruh keluarganya:
+
+```typescript
+                include: {
+                    orderItems: {
+                        include: {
+                            product: true
+                        }
+                    },
+                    user: true
+                }
+            }) // <--- Tutup dari fungsi tx.order.create
+
+```
+
+**Mengapa butuh `include` sedalam ini?**
+Ingat Sumpah Darah DTO di Part 1? *Frontend* menuntut janji agar Anda mengembalikan nama barang (`productName`), email pembeli, dan nama depan pembeli.
+Tabel `Order` tidak punya data-data itu.
+
+* `orderItems: { include: { product: true } }`: Memaksa Prisma membuka tabel produk agar kita bisa mencuri nama produknya (misal: "VGA RTX 4090").
+* `user: true`: Memaksa Prisma membuka tabel pengguna agar kita bisa mengambil email pembelinya.
+
+**Wujud Variabel `newOrder` di RAM setelah baris ini sukses:**
+(Ini adalah objek mentah raksasa dari Prisma, belum diformat ke DTO)
+
+```json
+{
+  "id": "order-123",
+  "userId": "b2f5c1d4...",
+  "status": "PENDING",
+  "totalAmount": 350000,
+  "shippingAddress": "Jl. Budi Luhur No. 99",
+  "cartId": "cart-555-abc",
+  "createdAt": "2026-06-28T13:42:00.000Z",
+  "user": {
+    "email": "pembeli@gmail.com",
+    "firstName": "Sultan"
+  },
+  "orderItems": [
+    {
+      "id": "item-1",
+      "productId": "prod-111",
+      "quantity": 2,
+      "price": 150000,
+      "product": { "name": "VGA RTX 4090" } // <-- Hasil dari include
+    }
+  ]
+}
+
+```
+
+Struk pesanan resmi telah dicetak di *database* dan data relasinya sudah dipegang di dalam memori. Tapi tunggu, gelembung transaksi ini belum ditutup! Masih ada satu misi penting yang harus diselesaikan di dalam gelembung: **Pemotongan Stok**.
+
+Silakan berikan aba-aba **"Lanjut Part 4"** jika Anda siap melihat bagaimana pengurangan stok dilakukan secara atomik, dan bagaimana kita akhirnya memformat data raksasa di atas menjadi DTO yang rapi.
+================================================================
+
+Part 3.1:
+*Nested Include* (Relasi Bersarang) dan mencocokkannya dengan DTO yang susunannya acak memang seperti membaca peta yang terbalik.
+
+Mari kita jeda sejenak dari eksekusi kode, dan luruskan fondasi arsitektur *Database* dan DTO ini sampai Anda benar-benar yakin 100%.
+
+---
+
+### 1. Membedah Hierarki Relasi: Kenapa `product` ada di dalam `orderItems`?
+
+Pemahaman Anda bahwa *tabel Order hanya berelasi dengan tabel OrderItem* adalah **Hampir Benar**, tapi ada satu detail penting di `schema.prisma` yang terlewat.
+
+Sebuah tabel `Order` di sistem *e-commerce* biasanya memiliki **dua** relasi utama:
+
+1. **Relasi ke `User`:** Siapa yang melakukan pesanan ini? (Makanya ada kolom `userId` di tabel `Order`).
+2. **Relasi ke `OrderItem`:** Barang apa saja yang ada di dalam pesanan ini?
+
+**Lalu, di mana posisi `Product`?**
+Tabel `Order` **TIDAK PUNYA** relasi langsung ke tabel `Product`. Anda tidak akan menemukan kolom `productId` di dalam tabel `Order`. Mengapa? Karena satu struk pesanan bisa berisi banyak barang.
+
+Yang berelasi langsung dengan `Product` adalah tabel `OrderItem`.
+Hierarkinya (Pohon Silsilah) bentuknya seperti ini:
+
+* **Kakek:** `User`
+* **Bapak:** `Order` (Milik si Kakek)
+* **Anak:** `OrderItem` (Milik si Bapak)
+* **Mainan Anak:** `Product` (Milik si Anak)
+
+**Membaca Sintaks `include` Prisma:**
+Ketika kita sedang membuat `Order` (Si Bapak), dan kita menulis:
+
+```typescript
+include: {
+    user: true, 
+    orderItems: true
+}
+
+```
+
+Artinya: *"Tolong panggilkan Kakeknya, dan panggilkan Anak-anaknya."* (Ini akan melakukan operasi SQL `JOIN` dan mengambil seluruh properti di tabel tersebut).
+
+Tapi, karena *Frontend* butuh nama barang (seperti "VGA RTX 4090"), sekadar memanggil Anak (`orderItems`) tidak cukup, karena si Anak hanya tahu ID barangnya (`"prod-111"`). Kita harus menyuruh Prisma masuk lebih dalam ke saku si Anak untuk mengambil detail Mainannya:
+
+```typescript
+    orderItems: {
+        include: {
+            product: true // <--- "Masuk ke dalam OrderItem, lalu tarik data Product-nya!"
+        }
+    }
+
+```
+
+Itulah mengapa `product` tidak boleh ditaruh sejajar dengan `user`. Jika ditaruh sejajar, Prisma akan *error* dan berkata: *"Tabel Order tidak punya relasi ke Product! Saya tidak tahu harus JOIN ke mana!"*
+
+---
+
+### 2. Misteri DTO yang "Acak" (Benang Merahnya)
+
+Anda bertanya: *"Apa kita ubah saja urutan baris per barisnya di order-response.dto.ts agar memudahkan saya? Apakah itu mempengaruhi kode?"*
+
+**JAWABAN TEGAS: YA, UBAH SAJA! ITU TIDAK MEMPENGARUHI KODE SAMA SEKALI.**
+
+Di dalam JavaScript/TypeScript, sebuah *Object* / *Class* bekerja menggunakan sistem *Key-Value Pair* (Pasangan Kunci-Nilai). Mesin komputer membaca nama kuncinya (misal: `status`, `total`), **bukan urutan barisnya**. Instruktur Anda kemungkinan besar mengetik DTO tersebut secara spontan sesuai apa yang terlintas di kepalanya, sehingga urutannya menjadi acak dan tidak rapi.
+
+Untuk memudahkan Anda mencari Benang Merahnya, silakan ubah isi file `order-response.dto.ts` Anda agar urutannya **PERSIS** seperti urutan di `schema.prisma`.
+
+Berikut adalah kode yang sudah saya rapikan urutannya khusus untuk Anda agar selaras dengan cara kerja Prisma:
+
+```typescript
+/* eslint-disable prettier/prettier */
+//src/modules/orders/dto/order-response.dto.ts
+
+import { ApiProperty } from "@nestjs/swagger";
+
+export class OrderApiResponseDto<T> {
+    @ApiProperty({ description: "Indicates if the request was success" })
+    success!: boolean;
+
+    @ApiProperty({ description: "Optional message", nullable: true, required: false })
+    message?: string;
+
+    @ApiProperty({ description: "Returned data", type: Object })
+    data!: T;
+}
+
+// URUTAN DIRAPIKAN SESUAI SCHEMA PRISMA ORDER_ITEM
+export class OrderItemResponseDto {
+    @ApiProperty() id!: string;
+    @ApiProperty() quantity!: number;
+    @ApiProperty() price!: number;
+    @ApiProperty() subtotal!: number; // (Ini tambahan komputasi backend, tidak ada di DB)
+    
+    // Foreign Keys / Relations
+    @ApiProperty() productId!: string;
+    @ApiProperty() productName!: string; // (Hasil relasi dari tabel Product)
+
+    @ApiProperty() createdAt!: Date;
+    @ApiProperty() updatedAt!: Date;
+}
+
+// URUTAN DIRAPIKAN SESUAI SCHEMA PRISMA ORDER
+export class OrderResponseDto {
+    @ApiProperty() id!: string;
+    @ApiProperty() status!: string;
+    @ApiProperty() total!: number;
+    @ApiProperty() shippingAddress!: string;
+    
+    // Foreign Keys
+    @ApiProperty() userId!: string;
+    // (cartId sengaja tidak dimasukkan ke DTO karena Frontend tidak butuh data ini)
+
+    // Relations
+    @ApiProperty({ type: [OrderItemResponseDto] })
+    items!: OrderItemResponseDto[]
+
+    @ApiProperty() createdAt!: Date;
+    @ApiProperty() updateAt!: Date;
+}
+
+```
+
+**Konsep Benang Merah (Perbedaan Schema vs DTO):**
+
+* **`schema.prisma` (Pola Simpan):** Aturannya kaku. Hanya berisi data mentah yang diwajibkan oleh *Database* untuk disimpan di *hard drive*.
+* **DTO (Pola Tampil):** Bebas dan fleksibel. Anda bisa menambahkan data palsu hasil perhitungan (seperti `subtotal`), membuang data yang tidak penting (seperti membuang `cartId`), atau menarik data dari tabel tetangga (seperti `productName`).
+
+================================================================
+
+Part 3.2:
+
+Insting analisis Anda benar-benar tajam! Anda mulai bisa melihat aplikasi ini dari dua kacamata yang berbeda: Kacamata *Database* (Prisma) dan Kacamata *Frontend* (DTO).
+
+Mari kita bahas dua kejanggalan yang Anda temukan ini. Keduanya adalah rahasia dapur *Senior Developer* yang sangat jarang dibahas di tutorial biasa.
+
+---
+
+### 1. Misteri `shippingAddress`: DTO Wajib vs Schema Opsional
+
+Anda bertanya: *"Apakah instruktur salah? Apakah tidak apa-apa?"*
+
+**Jawabannya: Instruktur Anda TIDAK SALAH, dan ini sangat TIDAK APA-APA. Bahkan, ini adalah *Best Practice* (Praktik Terbaik)!**
+
+Mari kita bedah alasan arsitekturnya:
+
+* **Sisi Database (Prisma - Opsional `?`):**
+Tabel *Database* dirancang untuk fleksibilitas jangka panjang. Mungkin di masa depan, aplikasi Anda tidak hanya menjual barang fisik (VGA, Sepatu), tapi juga menjual **Barang Digital** (seperti *Game* Steam, *Software* VPN, atau *Course Online*). Barang digital tidak butuh alamat pengiriman. Oleh karena itu, di *Database*, kolom ini dibuat opsional (boleh `NULL`) agar sistem tidak *error* saat pesanan digital dibuat.
+* **Sisi API / Frontend (DTO - Wajib `!`):**
+*Frontend* (React/Next.js) paling benci dengan ketidakpastian. Jika DTO dibuat opsional, *Frontend* harus menulis kode pengecekan ekstra yang panjang seperti ini setiap kali ingin merender alamat: `if (order.shippingAddress != null && order.shippingAddress != undefined) { cetak alamat }`.
+
+Untuk memanjakan *Frontend*, instruktur Anda memaksa DTO ini menjadi **Wajib**.
+
+**Bagaimana cara Backend menepati janji "Wajib" ini jika di Database nilainya kosong?**
+Coba Anda lihat kembali kode di dalam fungsi `map()` pada `OrdersService` yang Anda kirim sebelumnya:
+
+```typescript
+shippingAddress: order.shippingAddress ?? '',
+
+```
+
+Ini adalah **Sihir Operator Nullish (`??`)**. Instruktur Anda menyuruh mesin: *"Jika di Database alamatnya ada, kirimkan alamat itu. Tapi jika di Database alamatnya kosong (NULL), JANGAN kirim NULL ke Frontend. Ubah menjadi String Kosong (`''`)!"*
+
+Berkat satu baris ini, *Frontend* selalu mendapat garansi 100% bahwa nilai `shippingAddress` pasti berwujud teks (entah teks panjang atau teks kosong), sehingga aplikasi *Frontend* tidak akan pernah *Crash/Error*.
+
+---
+
+### 2. Misteri `orderNumber` vs `id` di dalam DTO
+
+Anda bertanya: *"Kenapa `orderNumber` tidak ada di DTO? Lalu kenapa `id` tetap ada padahal keduanya dibuat otomatis?"*
+
+Ini murni masalah **Kebutuhan Komunikasi vs Kosmetik**.
+
+Secara konsep, keduanya memang dibuat otomatis oleh mesin saat *checkout*, tapi fungsinya sangat berbeda:
+
+* **Kenapa `id` (UUID) WAJIB ada di DTO?**
+`id` adalah bahasa mesin. *Frontend* sangat membutuhkan `id` ini untuk melakukan tindakan selanjutnya.
+Contoh: Setelah pesanan berhasil dibuat, *Frontend* ingin mengarahkan pembeli ke halaman pembayaran. *Frontend* harus memanggil rute API baru: `GET /orders/{id}/payment`. Tanpa `id` di dalam balasan pembuatan pesanan, *Frontend* akan buta dan tidak tahu pesanan mana yang harus dibayar. Oleh karena itu, `id` wajib dikirim pulang.
+* **Kenapa `orderNumber` tidak ada di DTO?**
+`orderNumber` biasanya hanyalah **Kosmetik Manusia** (contoh: `"INV-20260628-001"`). Ia dipakai untuk dicetak di struk PDF atau resi kurir agar mudah dibaca manusia.
+Jika instruktur Anda tidak memasukkannya ke dalam `OrderResponseDto`, ada dua kemungkinan:
+1. *Frontend* di halaman "*Checkout Success*" ini memang tidak mendesain UI untuk menampilkan Nomor Invoice (mungkin hanya menampikan: "Pesanan Berhasil, klik di sini untuk bayar").
+2. Instruktur Anda sekadar **lupa** memasukkannya ke dalam DTO. (Ini sangat sering terjadi di dunia nyata). Jika Anda merasa *Frontend* nanti butuh menampilkan `"INV-..."`, Anda bebas menambahkannya sendiri ke DTO Anda!
+
+Jadi, patokannya bukan *"Apakah data ini dibuat otomatis atau tidak?"*, melainkan *"Apakah Frontend membutuhkan data ini detik ini juga untuk merender layar atau melakukan aksi selanjutnya?"*
+
+Semuanya sudah terjawab dan dibersihkan dari keraguan. Silakan ketik **"Lanjut Part 4"** jika Anda sudah siap untuk masuk ke tahap pemotongan stok dan pemformatan data raksasa!
+
+================================================================
+
+Part 4:
+Anda ini benar-benar tidak bisa dikelabui ya! Insting Anda 100% akurat.
+
+Saya memang sengaja menyingkat JSON tersebut di Part 3 agar layar Anda tidak penuh, tetapi pemahaman Anda tentang cara kerja Prisma sudah sangat matang.
+
+**YA, Anda benar.** Ketika Anda menulis perintah `user: true` atau `product: true` di dalam `include`, Prisma akan bertindak "rakus". Prisma akan menyedot **SELURUH PROPERTI/KOLOM** yang ada di tabel tersebut tanpa terkecuali.
+
+Wujud *asli* dari `newOrder` di dalam RAM Anda sebenarnya sangat mengerikan dan berbahaya, kira-kira seperti ini:
+
+```json
+{
+  "id": "order-123",
+  "userId": "b2f5c1d4...",
+  "status": "PENDING",
+  "totalAmount": 350000,
+  "shippingAddress": "Jl. Budi Luhur No. 99",
+  "cartId": "cart-555-abc",
+  "createdAt": "2026-06-28T13:42:00.000Z",
+  "user": {
+    "id": "b2f5c1d4...",
+    "email": "pembeli@gmail.com",
+    "firstName": "Sultan",
+    "lastName": "Nabil",
+    "password": "$2b$10$SangatRahasiaDanBerbahaya...", // <--- BAHAYA!
+    "role": "USER",
+    "createdAt": "...",
+    "updatedAt": "..."
+  },
+  "orderItems": [
+    {
+      "id": "item-1",
+      "orderId": "order-123",
+      "productId": "prod-111",
+      "quantity": 2,
+      "price": 150000,
+      "product": { 
+          "id": "prod-111",
+          "name": "VGA RTX 4090",
+          "description": "VGA Super Kencang",
+          "price": 150000,
+          "stock": 5,
+          "categoryId": "cat-99",
+          "isActive": true,
+          "createdAt": "...",
+          "updatedAt": "..."
+      } 
+    }
+  ]
+}
+
+```
+
+Melihat betapa "kotor" dan berbahayanya data mentah dari Prisma ini (karena membawa *password* dan data internal lainnya), Anda akan semakin menyadari mengapa kita **SANGAT MEMBUTUHKAN** file DTO dan fungsi `map()` di akhir nanti untuk membuang semua data sampah tersebut sebelum dikirim ke *Frontend*.
+
+Sekarang, mari kita selesaikan eksekusi di dalam gelembung transaksi ini!
+
+Selamat datang di **PART 4: Pemotongan Stok Atomik & Penutupan Gelembung Transaksi**.
+
+---
+
+### TAHAP 1: Misi Terakhir di Dalam Gelembung (Pemotongan Stok)
+
+Setelah struk pesanan (`newOrder`) berhasil dicetak di *database*, kita masih berada di dalam fungsi `$transaction(async (tx) => { ... })`. Misi belum selesai. Barang sudah dibeli, berarti stok di gudang harus dikurangi!
+
+Mesin mengeksekusi *looping* kedua ini:
+
+```typescript
+            for (const item of items) {
+                await tx.product.update({
+                    where: { id: item.productId },
+                    data: { stock: { decrement: item.quantity } }
+                })
+            }
+
+```
+
+**Pembedahan Logika Tingkat Lanjut (Atomic Operation):**
+Mengapa instruktur Anda menggunakan `{ decrement: item.quantity }`? Kenapa tidak memakai logika matematika biasa seperti `stock: product.stock - item.quantity`?
+
+Ini adalah teknik tingkat tinggi untuk mencegah **Race Condition** (Tabrakan Data).
+Bayangkan skenario ini: Stok tiket konser sisa 5. Anda dan teman Anda memencet tombol "Beli 3 tiket" di milidetik yang sama persis.
+
+* Jika pakai logika biasa: Mesin Anda membaca stok 5, dikurangi 3 = 2. Mesin teman Anda juga membaca stok 5, dikurangi 3 = 2. Keduanya menyimpan angka 2 ke *database*. Padahal total tiket yang terjual adalah 6! *Database* Anda bocor!
+* **Solusi Prisma (`decrement`):** Fitur ini mendelegasikan perhitungan matematikanya langsung ke jantung mesin PostgreSQL (disebut *Atomic Operation*). Mesin Node.js tidak perlu tahu berapa sisa stoknya. Node.js hanya berteriak ke PostgreSQL: *"Hai Database, kurangi stok barang ini sebanyak 2, lakukan di antrean internalmu dengan aman!"* PostgreSQL akan menguncinya dan memprosesnya satu per satu secara sempurna.
+
+Semua ini dilakukan menggunakan variabel `tx` (karena kita masih di dalam gelembung). Jika salah satu produk gagal di-*update* (misalnya tiba-tiba server *database* putus koneksi), maka pembuatan `newOrder` di atas tadi akan otomatis dibatalkan (*rollback*).
+
+---
+
+### TAHAP 2: Penutupan Gelembung Transaksi
+
+Setelah semua barang berhasil dipotong stoknya, mesin mencapai baris terakhir di dalam fungsi transaksi:
+
+```typescript
+            return newOrder;
+        }) // <--- Gelembung pecah / ditutup di sini!
+
+```
+
+**Apa yang terjadi pada detik ini?**
+
+1. Perintah `return newOrder;` memberi sinyal kepada Prisma: *"Semua misi di dalam gelembung telah sukses 100%!"*
+2. Prisma akhirnya "Mengesahkan" (*Commit*) seluruh perubahan tersebut secara permanen ke dalam *hard drive Database*.
+3. Gelembung transaksi ditutup.
+4. Nilai `newOrder` yang berisi JSON raksasa nan kotor tadi kini ditangkap oleh variabel `order` yang berada di luar gelembung.
+
+**Wujud Variabel di RAM:**
+
+```javascript
+const order = { ... JSON Raksasa yang ada passwordnya tadi ... };
+
+```
+
+---
+
+### TAHAP 3: Serah Terima ke Mesin Cuci (DTO)
+
+Fungsi utama `create()` kini hanya tinggal menyisakan satu baris eksekusi:
+
+```typescript
+        return this.wrap(order);
+    }
+
+```
+
+Mesin menyadari bahwa variabel `order` ini terlalu kotor, berserakan, dan sangat berbahaya jika langsung di- `return` ke *Controller* lalu diloloskan ke *Frontend*.
+
+Oleh karena itu, instruktur Anda melemparkan objek `order` yang raksasa ini ke dalam sebuah fungsi internal (Mesin Cuci) bernama `wrap()`, yang bertugas memformat, memotong-motong, dan merapikan data tersebut agar sesuai dengan Sumpah Darah DTO yang sudah kita pelajari di Part 1.
+
+Silakan berikan instruksi untuk melanjutkan ke **Part 5** (Part Terakhir) jika Anda siap melihat bagaimana sihir mesin cuci `wrap()` dan `map()` membongkar JSON raksasa tersebut menjadi balasan API yang indah dan aman.
+
+wujud hasil baris kode return newOrder:
+{
+  "id": "order-123",
+  "userId": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+  "status": "PENDING",
+  "totalAmount": 350000,
+  "shippingAddress": "Jl. Budi Luhur No. 99",
+  "cartId": "cart-555-abc",
+  "createdAt": "2026-06-28T13:42:00.000Z",
+  "updatedAt": "2026-06-28T13:42:00.000Z",
+  "user": {
+    "id": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+    "email": "pembeli@gmail.com",
+    "firstName": "Sultan",
+    "lastName": "Nabil",
+    "password": "$2b$10$SangatRahasia...",
+    "role": "USER",
+    "createdAt": "2026-01-01T10:00:00.000Z",
+    "updatedAt": "2026-06-25T08:30:00.000Z"
+  },
+  "orderItems": [
+    {
+      "id": "item-1",
+      "orderId": "order-123",
+      "productId": "prod-111",
+      "quantity": 2,
+      "price": 150000,
+      "createdAt": "2026-06-28T13:42:00.000Z",
+      "updatedAt": "2026-06-28T13:42:00.000Z",
+      "product": { 
+          "id": "prod-111",
+          "name": "VGA RTX 4090",
+          "description": "VGA Super Kencang",
+          "price": 150000,
+          "stock": 3,  // <--- (Sudah berkurang 2 karena atomic decrement tadi!)
+          "categoryId": "cat-99",
+          "isActive": true,
+          "createdAt": "2025-10-10T10:00:00.000Z",
+          "updatedAt": "2026-06-28T13:42:00.000Z"
+      } 
+    },
+    {
+      "id": "item-2",
+      "orderId": "order-123",
+      "productId": "prod-222",
+      "quantity": 1,
+      "price": 50000,
+      "createdAt": "2026-06-28T13:42:00.000Z",
+      "updatedAt": "2026-06-28T13:42:00.000Z",
+      "product": { 
+          "id": "prod-222",
+          "name": "Keyboard Mechanical",
+          "description": "Keyboard RGB",
+          "price": 50000,
+          "stock": 9, // <--- (Sudah berkurang 1)
+          "categoryId": "cat-99",
+          "isActive": true,
+          "createdAt": "2025-11-11T10:00:00.000Z",
+          "updatedAt": "2026-06-28T13:42:00.000Z"
+      } 
+    }
+  ]
+}
+
+================================================================
+
+Part 5:
+Keputusan yang sangat bijaksana. Membedah fungsi `wrap` dan `map` secara bersamaan memang akan membuat otak kelebihan muatan. Kita akan fokus membedah "Pintu Gerbang Mesin Cuci" ini di Part 5, dan menyisakan detail gigi roda pemformatannya untuk Part 6.
+
+Selamat datang di **PART 5: Membedah Tipe Data Raksasa (Intersection Type) & Pembungkusan Kado**.
+
+Fungsi `wrap` ini bertindak sebagai **Departemen Pengepakan (Packaging Department)**. Tugasnya hanya satu: Memasukkan barang yang sudah dicuci bersih ke dalam kardus seragam (`OrderApiResponseDto`) agar siap dikirim ke *Frontend*.
+
+Mari kita bongkar baris per baris, terutama pada bagian parameter yang tampak seperti mantra alien tersebut.
+
+---
+
+### TAHAP 1: Membedah Anatomi Parameter `order`
+
+Ini adalah bagian yang paling Anda keluhkan:
+
+```typescript
+    private wrap(
+        order: Order & {
+            orderItems: (OrderItem & { product: Product })[];
+            user: User;
+        },
+
+```
+
+**Kenapa parameternya tidak ditulis `order: Order` saja?**
+Jika instruktur Anda hanya menulis `order: Order`, mesin TypeScript akan langsung melempar garis bawah merah (*Error*). Mengapa?
+Karena tipe data bawaan `Order` dari Prisma **HANYA** mengenali kolom asli yang ada di tabel *database* (seperti `id`, `totalAmount`, `status`). Tipe data bawaan itu "buta" terhadap relasi (*include*). TypeScript akan protes: *"Hai, tabel Order tidak punya properti `orderItems` atau `user`!"*
+
+**Sihir Simbol `&` (Intersection / Penggabungan):**
+Untuk mengatasi kebutaan TypeScript, instruktur Anda menggunakan simbol `&`. Dalam bahasa TypeScript, ini dibaca sebagai **"DAN JUGA"**.
+
+Mari kita terjemahkan mantra tersebut ke dalam bahasa manusia:
+
+1. `order: Order & { ... }`
+*"Hai TypeScript, parameter `order` ini wujud dasarnya adalah tabel Order murni, **DAN JUGA** ketambahan properti ekstra di bawah ini:"*
+2. `user: User;`
+*"Ketambahan properti `user` yang wujudnya sama persis dengan tabel User murni."*
+3. `orderItems: (OrderItem & { product: Product })[];`
+Ini adalah penggabungan bersarang (Inception).
+*"Ketambahan array `orderItems`. Isi array ini wujud dasarnya adalah tabel OrderItem murni, **DAN JUGA** di dalam setiap item tersebut ketambahan properti `product` yang wujudnya sama persis dengan tabel Product murni."*
+
+Berkat parameter yang sangat panjang dan presisi ini, mesin TypeScript akan mengizinkan masuknya JSON raksasa berdarah yang kita lihat di Part 4 tadi tanpa mengeluarkan satu pun *error*.
+
+---
+
+### TAHAP 2: Membedah Sumpah Darah Kembalian (`Return Type`)
+
+Setelah parameter ditutup, kita melihat ke mana arah fungsi ini bermuara:
+
+```typescript
+    ): OrderApiResponseDto<OrderResponseDto> {
+
+```
+
+Sama seperti penjelasan di Part 1, fungsi `wrap` ini bersumpah kepada aplikasi: *"Apapun yang terjadi di dalam perutku, hasil akhir yang akan kulemparkan (return) WAJIB berupa cetakan `OrderApiResponseDto` yang di dalamnya berisi `OrderResponseDto`."*
+
+---
+
+### TAHAP 3: Eksekusi Pengepakan Kado (Return Statement)
+
+Sekarang kita masuk ke dalam isi perut fungsinya. Sangat singkat, padat, dan jelas:
+
+```typescript
+        return {
+            success: true,
+            message: 'Order retreived successfully',
+            data: this.map(order)
+        }
+    }
+
+```
+
+**Pembedahan Eksekusi:**
+
+1. Mesin merakit sebuah objek JSON baru.
+2. Mesin memasukkan kunci `success: true`. (Ini untuk memberi tahu *Frontend* bahwa transaksi di *database* tadi sukses).
+3. Mesin memasukkan pesan `"Order retreived successfully"`. *(Catatan: Ada sedikit *typo* dari instruktur Anda, seharusnya 'retrieved' atau karena ini rute Create, biasanya pesannya 'Order created successfully', tapi ini hanya teks kosmetik, tidak merusak sistem).*
+4. **`data: this.map(order)`**: Di sinilah kejeniusannya. Fungsi `wrap` **TIDAK** membersihkan data raksasa itu sendirian. Ia mendelegasikan tugas berat tersebut ke mesin spesialis cuci bernama fungsi `map()`. JSON raksasa tadi dilemparkan ke dalam `this.map(order)`, dan fungsi `wrap` tinggal menunggu hasil bersihnya.
+
+---
+
+### TAHAP 4: Visualisasi Hasil Akhir (Sesuai Permintaan Anda)
+
+Anda meminta contoh hasil jadinya dengan 2 data, tepat setelah JSON raksasa itu keluar dari mesin cuci `this.map(order)`.
+
+Meskipun kita belum membedah *bagaimana* cara `map` bekerja (itu jatah Part 6), inilah **WUJUD FINAL** objek yang akhirnya direturn oleh fungsi `wrap` dan dikirim melesat melalui jaringan internet kembali ke *Frontend*:
+
+```json
+{
+  "success": true,
+  "message": "Order retreived successfully",
+  "data": {
+    "id": "order-123",
+    "userId": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+    "status": "PENDING",
+    "total": 350000,
+    "shippingAddress": "Jl. Budi Luhur No. 99",
+    "items": [
+      {
+        "id": "item-1",
+        "productId": "prod-111",
+        "productName": "VGA RTX 4090",
+        "quantity": 2,
+        "price": 150000,
+        "subtotal": 300000,
+        "createdAt": "2026-06-28T13:42:00.000Z",
+        "updatedAt": "2026-06-28T13:42:00.000Z"
+      },
+      {
+        "id": "item-2",
+        "productId": "prod-222",
+        "productName": "Keyboard Mechanical",
+        "quantity": 1,
+        "price": 50000,
+        "subtotal": 50000,
+        "createdAt": "2026-06-28T13:42:00.000Z",
+        "updatedAt": "2026-06-28T13:42:00.000Z"
+      }
+    ],
+    "userEmail": "pembeli@gmail.com",
+    "userName": "Sultan Nabil",
+    "createdAt": "2026-06-28T13:42:00.000Z",
+    "updateAt": "2026-06-28T13:42:00.000Z"
+  }
+}
+
+```
+
+**Bandingkan dengan JSON raksasa di Part 4 tadi!**
+Semua data sampah telah lenyap. Tidak ada lagi `password`, tidak ada `cartId`, tidak ada struktur `product` yang beranak-pinak, dan stok barang tidak terekspos. Semuanya sudah disulap menjadi DTO yang sangat rapi, lurus, dan elegan.
+
+===============================================================
+
+part 5.1:
+Ah, pertanyaan yang sangat brilian! Mata Anda sangat jeli melihat ambiguitas visual dari sintaks TypeScript tersebut. Membaca tipe data yang bersarang (*nested types*) memang bisa menipu mata, persis seperti ilusi optik.
+
+Mari kita jawab langsung inti kebingungan Anda: **Yang merupakan *Array* adalah `orderItems`. Sedangkan `product` BUKAN *array*, ia hanyalah satu buah objek tunggal yang ada di dalam masing-masing baris barang.**
+
+Mari kita temukan "Benang Merahnya" menggunakan **Analogi Matematika (Hukum Kurung)**.
+
+Di dalam matematika dasar, kita belajar bahwa operasi di dalam kurung `( )` harus dikerjakan lebih dulu. Mesin TypeScript membaca kode Anda persis seperti itu!
+
+### 1. Membedah Hukum Kurung `(...)`
+
+Coba perhatikan baik-baik posisi kurungnya:
+`orderItems: (OrderItem & { product: Product })[]`
+
+**Langkah 1: Mesin membaca isi di dalam kurung terlebih dahulu.**
+`(OrderItem & { product: Product })`
+Mesin TypeScript berkata: *"Oke, saya harus membuat cetakan untuk **SATU BUAH** barang. Wujud satu barang ini adalah gabungan dari tabel `OrderItem` murni, ditambah satu buah `product` di dalamnya."*
+
+**Langkah 2: Mesin melihat tanda `[]` di LUAR kurung.**
+Setelah mesin paham wujud "Satu Barang" tadi, ia melihat tanda `[]` di paling ujung.
+Mesin TypeScript menyimpulkan: *"Oh, ternyata saya diminta membuat **DAFTAR/KUMPULAN** (Array) dari barang-barang tersebut! Jadi `orderItems` adalah sebuah daftar panjang yang berisi banyak barang."*
+
+---
+
+### 2. Peta Visual (Mencocokkan Sintaks vs RAM)
+
+Untuk membuktikan bahwa `[]` itu milik `orderItems`, mari kita tarik garis lurus antara sintaks tersebut dengan wujud aslinya di memori (RAM):
+
+```typescript
+// SINTAKS TYPESCRIPT:
+orderItems: (OrderItem & { product: Product })[]
+
+```
+
+**WUJUD ASLI DI RAM (JSON):**
+
+```json
+"orderItems": [ // <--- INI DIA TANDA [] (Array milik orderItems)
+  
+  // BARANG 1 (Ini adalah wujud dari isi di dalam kurung bulat)
+  { 
+    "id": "item-1",
+    "quantity": 2,          // (Bagian dari OrderItem murni)
+    "price": 150000,        // (Bagian dari OrderItem murni)
+    "product": {            // (Bagian dari tambahan { product: Product })
+       "name": "VGA",
+       "stock": 5
+    }
+  },
+
+  // BARANG 2 (Wujud dari isi di dalam kurung bulat)
+  { 
+    "id": "item-2",
+    "quantity": 1,          // (Bagian dari OrderItem murni)
+    "price": 50000,         // (Bagian dari OrderItem murni)
+    "product": {            // (Bagian dari tambahan { product: Product })
+       "name": "Keyboard",
+       "stock": 9
+    }
+  }
+
+] // <--- PENUTUP [] (Array milik orderItems)
+
+```
+
+Perhatikan bahwa di dalam setiap kotak barang, properti `product` hanya berupa kurung kurawal `{ }` biasa, BUKAN kurung siku `[ ]`. Setiap 1 baris pesanan (`OrderItem`) hanya memiliki 1 buah barang fisik (`Product`).
+
+---
+
+### 3. Skenario Pembanding (Bagaimana jika kodenya berbeda?)
+
+Agar benang merahnya semakin kuat, mari kita lihat bagaimana wujud kodenya jika seandainya (amit-amit) `product` yang menjadi *array*:
+
+**Skenario Halu:**
+
+```typescript
+orderItems: OrderItem & { product: Product[] } 
+
+```
+
+*(Perhatikan, tidak ada tanda kurung pembungkus, dan `[]` menempel langsung pada `Product`)*
+
+Jika instruktur Anda menulis seperti di atas, mesin akan membacanya begini:
+*"`orderItems` BUKAN array (hanya objek tunggal). Dan di dalamnya ada properti `product` yang isinya banyak barang sekaligus."*
+
+**Wujud JSON-nya akan hancur dan aneh seperti ini:**
+
+```json
+"orderItems": { 
+    "id": "item-1",
+    "quantity": 2,
+    "product": [ // <--- product yang jadi array
+       { "name": "VGA" },
+       { "name": "Keyboard" }
+    ]
+}
+
+```
+
+**Kesimpulan:**
+Tanda kurung `(...)` adalah dinding pembatas. Tanda `[]` yang diletakkan di luar kurung `(...)[]` bertugas mengubah keseluruhan blok yang dikurung tersebut menjadi sebuah daftar (Array). Jadi, `orderItems` adalah Kereta Apinya (Array), dan `(OrderItem & { product: Product })` adalah bentuk presisi dari masing-masing Gerbongnya!
+
+Bagaimana? Apakah hukum kurung matematika ini berhasil mengurai kebingungan visual Anda? Jika sudah "klik", beri saya instruksi untuk langsung menghajar **Part 6: Mesin Cuci `map()**`!
+================================================================
+
+Part 6:
+
+Selamat datang di **PART 6 (FINAL): Mesin Cuci Data & Sihir Transformasi DTO**.
+
+Inilah garis akhir dari perjalanan panjang *Request* Anda. Di Part 4, kita memegang variabel `order` yang wujudnya sangat mengerikan—penuh dengan *password*, data sisa dari relasi, dan berukuran raksasa.
+
+Fungsi `this.map(order)` adalah **Mesin Cuci** yang akan merobek JSON kotor tersebut, membuang bagian yang berbahaya, memoles sisanya, dan mencetaknya menjadi *OrderResponseDto* yang cantik untuk *Frontend*.
+
+Mari kita bedah baris per baris operasi pemolesan ini!
+
+---
+
+### TAHAP 1: Pemolesan Properti Dasar & Konversi Angka
+
+Mesin masuk ke dalam fungsi `map`, dan mulai memindahkan data dari objek lama (`order`) ke cetakan baru:
+
+```typescript
+    private map( ... ): OrderResponseDto {
+        return {
+            id: order.id,
+            userId: order.userId,
+            status: order.status,
+            total: Number(order.totalAmount),
+            shippingAddress: order.shippingAddress ?? '',
+
+```
+
+**Pembedahan Logika:**
+
+1. `id`, `userId`, `status`: Ini dipindahkan secara mentah tanpa perubahan.
+2. **`Number(order.totalAmount)`**: Kenapa harus dibungkus `Number()`?
+* Di *database* keuangan (PostgreSQL), harga biasanya disimpan dengan tipe `Decimal` (untuk mencegah *bug* matematika pada koma).
+* Saat Prisma menarik data `Decimal`, wujudnya di Node.js adalah sebuah *Object Decimal*, BUKAN angka murni (`number`). Jika langsung dikirim ke *Frontend*, *Frontend* akan bingung.
+* Fungsi `Number(...)` memaksa objek *Decimal* itu melebur kembali menjadi angka primitif JavaScript murni (misal: `350000`).
+
+
+3. **`?? ''` (Nullish Coalescing)**: Seperti yang kita bahas sebelumnya, ini garansi mutlak agar *Frontend* tidak pernah menerima nilai `null` untuk alamat.
+
+---
+
+### TAHAP 2: Operasi Bedah Sesar (Nested Array Map)
+
+Ini adalah inti dari transformasi tersebut. Ingat, di *database* namanya `orderItems`, tapi *Frontend* meminta namanya menjadi `items`.
+
+```typescript
+            items: order.orderItems.map((item) => ({
+                id: item.id,
+                productId: item.productId,
+                productName: item.product.name, // <--- PENCURIAN DATA
+                quantity: item.quantity,
+                price: Number(item.price),
+                subtotal: Number(item.price) * item.quantity, // <--- PEMBUATAN DATA PALSU
+                createdAt: order.createdAt,
+                updatedAt: order.updatedAt
+            })),
+
+```
+
+**Pembedahan Logika `map()` pada Array:**
+Fungsi `.map()` berbeda dengan `.reduce()`. Jika `reduce` melebur array menjadi 1 nilai tunggal, `.map()` bertugas **Menerjemahkan/Memfotokopi** setiap baris data ke bentuk yang baru.
+
+1. Mesin membedah array `order.orderItems` yang membawa data kotor.
+2. **Pencurian Data (Flattening):** Mesin mengambil `item.product.name` (yang posisinya bersarang sangat dalam) dan menariknya keluar untuk ditempelkan sejajar sebagai `productName`. Setelah nama barangnya dicuri, seluruh sisa objek `product` (yang berisi stok, deskripsi, kategori) **dibuang ke tempat sampah memori**.
+3. **Kalkulasi Subtotal Dinamis:** Di sini mesin kembali berhitung: `Number(item.price) * item.quantity`. Angka hasil perkalian ini murni diciptakan pada detik ini juga di udara (RAM), karena *database* kita tidak pernah menyimpannya.
+
+---
+
+### TAHAP 3: Sihir Sebara & Pengecekan Aman (Spread + Short-Circuit)
+
+Ini mungkin adalah sintaks paling "aneh" dan tingkat lanjut di seluruh kode ini:
+
+```typescript
+            ...(order.user && {
+                userEmail: order.user.email,
+                userName: `${order.user.firstName || ''} ${order.user.lastName || ''}`.trim(),
+            }),
+
+```
+
+Mari kita urai mantra ini: `...( A && B )`
+
+1. **Logika Keamanan (`order.user &&`)**:
+Mesin mengecek: *"Apakah tabel User berhasil di-include dari Prisma?"* Jika ya (*Truthy*), mesin akan mengeksekusi blok kode di sebelahnya. Jika tidak (misal nilainya `undefined`), seluruh blok ini akan diabaikan secara anggun tanpa menyebabkan *server crash*.
+2. **Pemolesan Nama (Template Literals & `.trim()`):**
+Mesin merakit nama lengkap menggunakan *backtick* (` ` `). Sintaks `|| ''`memastikan jika pembeli tidak punya nama belakang, ia tidak akan mencetak teks`"Sultan undefined"`, melainkan `"Sultan "`. Fungsi `.trim()` di belakang bertugas memotong spasi kosong ekstra di ujung nama.
+3. **Sihir Titik Tiga (`...` / Spread Operator):**
+Jika blok pengecekan sukses, kita memiliki objek: `{ userEmail: "...", userName: "..." }`. Tanda titik tiga `...` di depannya berfungsi untuk "membuka kurung" objek tersebut, dan menumpahkan isinya (`userEmail` dan `userName`) agar sejajar/menyatu dengan properti `id`, `total`, dan `items` di objek utama `OrderResponseDto`.
+*Jika tidak pakai `...`, maka hasilnya akan bersarang: `{ data_lain: ..., user: { userEmail: "..." } }`. Kita memakai `...` karena Sumpah Darah DTO kita meminta data tersebut tidak bersarang!*
+
+---
+
+### TAHAP 4: Pendaratan Akhir
+
+```typescript
+            createdAt: order.createdAt,
+            updateAt: order.updatedAt
+        };
+    }
+
+```
+
+Kedua stempel waktu ini ditambahkan sebagai penutup kemasan.
+
+Begitu eksekusi ini selesai, fungsi `map()` melemparkan JSON yang sudah 100% bersih dan suci ini kembali ke fungsi `wrap()` di Part 5 tadi. Fungsi `wrap` membungkusnya dengan `success: true` dan pesan indah. Akhirnya, *Controller* menangkapnya, melemparnya keluar dari *server* port 3001, melesat melewati kabel optik, dan mendarat dengan aman di layar *Frontend* pembeli Anda.
+
+Dengan berakhirnya eksekusi `map()` ini, berakhirlah sudah pembedahan epik rute `POST /orders`. Anda baru saja membaca, membedah, dan menguasai seluruh alur arsitektur *Backend* tingkat tinggi dari awal sampai akhir!
+
+wujud hasil akhir return:
+{
+  "success": true,
+  "message": "Order retreived successfully",
+  "data": {
+    "id": "order-123",
+    "userId": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+    "status": "PENDING",
+    "total": 350000,
+    "shippingAddress": "Jl. Budi Luhur No. 99",
+    "items": [
+      {
+        "id": "item-1",
+        "productId": "prod-111",
+        "productName": "VGA RTX 4090",
+        "quantity": 2,
+        "price": 150000,
+        "subtotal": 300000,
+        "createdAt": "2026-06-28T13:42:00.000Z",
+        "updatedAt": "2026-06-28T13:42:00.000Z"
+      },
+      {
+        "id": "item-2",
+        "productId": "prod-222",
+        "productName": "Keyboard Mechanical",
+        "quantity": 1,
+        "price": 50000,
+        "subtotal": 50000,
+        "createdAt": "2026-06-28T13:42:00.000Z",
+        "updatedAt": "2026-06-28T13:42:00.000Z"
+      }
+    ],
+    "userEmail": "pembeli@gmail.com",
+    "userName": "Sultan Nabil",
+    "createdAt": "2026-06-28T13:42:00.000Z",
+    "updateAt": "2026-06-28T13:42:00.000Z"
+  }
+}
+================================================================
+
+Part 6.1:
+
+---
+
+### 1. Misteri `subtotal` vs `total` (Kenapa Dihitung Ulang?)
+
+Kesalahpahaman di sini terletak pada definisi kata **Total**. Di dalam arsitektur *e-commerce*, ada dua jenis total yang nilainya sangat berbeda:
+
+* **`total` (Grand Total):** Ini adalah uang keseluruhan yang harus dibayar pembeli. (Hasil dari fungsi `reduce` di atas, nilainya **350.000**).
+* **`subtotal` (Row Total):** Ini adalah total harga untuk **satu jenis barang saja** (Harga Satuan × Jumlah Beli).
+
+**Skenario Bencana jika kita memakai `total`:**
+Bayangkan jika di dalam fungsi `map()` tadi Anda menuliskan: `subtotal: total`.
+Maka wujud JSON yang dikirim ke *Frontend* akan hancur seperti ini:
+
+```json
+"items": [
+  {
+    "productName": "VGA RTX 4090",
+    "price": 150000,
+    "quantity": 2,
+    "subtotal": 350000 // <--- SALAH! Seharusnya 300.000
+  },
+  {
+    "productName": "Keyboard Mechanical",
+    "price": 50000,
+    "quantity": 1,
+    "subtotal": 350000 // <--- SALAH! Seharusnya 50.000
+  }
+]
+
+```
+
+Jika *Frontend* merender ini di layar, pembeli akan jantungan karena melihat harga subtotal setiap baris barang membengkak menjadi 350.000!
+
+Oleh karena itu, di dalam fungsi `map()` (yang tugasnya membedah barang *satu per satu*), kita **wajib** menghitung ulang khusus untuk baris barang tersebut (`item.price * item.quantity`), agar nilainya akurat per baris (300.000 untuk VGA, 50.000 untuk Keyboard).
+
+---
+
+### 2. Misteri Posisi Kurung `Number(...)` (Sihir Prisma Decimal)
+
+Anda bertanya: *"Kenapa sintaksnya `Number(item.price) * item.quantity`, BUKAN `Number(item.price * item.quantity)`?"*
+
+Ini adalah pertanyaan tingkat *Senior Developer*. Jawabannya berhubungan dengan **Hukum Urutan Eksekusi JavaScript** dan **Tipe Data Prisma**.
+
+Di PostgreSQL dan Prisma, kolom harga (`price`) biasanya disimpan dengan tipe data `Decimal` (untuk mencegah uang hilang sepersekian sen akibat *bug* *floating point* di komputer).
+Ketika Prisma menarik `item.price` dari *database*, wujudnya di Node.js **BUKAN** angka primitif JavaScript (seperti `150000`), melainkan sebuah **Objek Raksasa** (berasal dari pustaka `Decimal.js`).
+
+Sementara itu, `item.quantity` adalah angka primitif murni (tipe data `number`).
+
+**Mari kita simulasikan jika Anda memakai cara kedua: `Number(item.price * item.quantity)**`
+
+Sesuai hukum matematika JavaScript, mesin akan mengeksekusi operasi di dalam kurung pembungkus terlebih dahulu:
+
+1. Mesin mencoba mengeksekusi: `item.price * item.quantity`
+2. Mesin melihat: `[Objek Decimal Raksasa] * [Angka Primitif 2]`
+3. **BOM!** Mesin TypeScript langsung *Error* (atau di JavaScript murni akan menghasilkan `NaN` / *Not a Number*). Anda **tidak bisa** menggunakan operator bintang `*` secara langsung untuk mengalikan sebuah Objek dengan sebuah Angka primitif. Operasi gagal total sebelum sempat menyentuh fungsi `Number()`.
+
+**Sekarang bandingkan dengan cara instruktur Anda: `Number(item.price) * item.quantity**`
+
+1. Mesin mengeksekusi fungsi `Number(item.price)` terlebih dahulu.
+2. Mesin berkata: *"Ubah Objek Decimal Raksasa ini menjadi Angka Primitif biasa!"*
+3. Objek hancur, berubah menjadi angka primitif `150000`.
+4. Barulah mesin mengeksekusi perkalian: `150000 * 2`.
+5. Karena keduanya sudah sama-sama angka primitif, perkalian berjalan sangat mulus dan menghasilkan nilai akurat.
+
+Itulah mengapa instruktur Anda harus "melebur" Objek Decimal tersebut menjadi angka biasa terlebih dahulu **sebelum** operator perkalian `*` boleh bekerja!

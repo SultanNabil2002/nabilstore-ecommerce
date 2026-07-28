@@ -1,0 +1,897 @@
+Alur kode yang dijelaskan Oleh Gemini:
+@ApiTags('orders')
+@ApiBearerAuth('JWT-auth')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Controller('orders')
+export class OrdersController {
+    constructor(private readonly ordersService: OrdersService) { }
+
+    @Post()
+    @ModerateThrottle()
+    @ApiOperation({
+        summary: "Create a new order"
+    })
+    @ApiBody({
+        type: CreateOrderDto
+    })
+    @ApiCreatedResponse({
+        description: "Order created succesfully",
+        type: OrderApiResponseDto
+    })
+    @ApiBadRequestResponse({
+        description: "Invalid data or insufficient stock"
+    })
+    @ApiNotFoundResponse({
+        description: "Cart not found or empty"
+    })
+    @ApiTooManyRequestsResponse({
+        description: 'Too many requests - rate limit'
+    })
+    async create(
+        @GetUser("id") userId: string,
+        @Body() createOrderDto: CreateOrderDto
+    ) {
+        return await this.ordersService.create(userId, createOrderDto)
+    }
+}
+==========================================================
+Penjelasan Lengkap Detail Dan Alur Dari Awal - Akhir:
+Part 1
+Baik, mari kita mulai operasi bedah mendalam ini. Siapkan fokus Anda, karena kita akan melihat apa yang terjadi di balik layar sepersekian milidetik saat *Frontend* menembak rute ini.
+
+Selamat datang di **PART 1: Titik Berangkat & Pertarungan Satpam (Throttler vs Request)**.
+
+---
+
+### TAHAP 1: Titik Berangkat (Wujud Asli HTTP Request)
+
+Bayangkan seorang *user* di aplikasi *Frontend* Anda (misalnya React atau Next.js) baru saja memasukkan alamat pengiriman dan menekan tombol **"Buat Pesanan"**.
+
+Pada detik itu juga, *Frontend* merakit sebuah paket data (HTTP Request) dan menembakkannya ke *server* NestJS Anda di port 3001.
+
+**Wujud Asli `HTTP Request` Mentah di Udara:**
+
+```json
+{
+  "method": "POST",
+  "url": "http://localhost:3001/api/v1/orders",
+  "headers": {
+    "host": "localhost:3001",
+    "content-type": "application/json",
+    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." // (Token JWT User)
+  },
+  "body": {
+    "shippingAddress": "Jalan Kebon Jeruk Raya No. 27",
+    "items": [
+      {
+        "productId": "prod-12345",
+        "quantity": 2,
+        "price": 25.50
+      }
+    ]
+  }
+}
+
+```
+
+Paket data ini sekarang telah mendarat di gerbang depan aplikasi NestJS Anda dan bersiap masuk ke dalam `OrdersController`.
+
+---
+
+### TAHAP 2: Kosmetik Swagger (`@ApiTags` & `@ApiBearerAuth`)
+
+Sebelum *Request* benar-benar diproses oleh logika keamanan, mesin pemindai NestJS (saat pertama kali *server* menyala) sudah membaca dua baris paling atas di `OrdersController` Anda:
+
+```typescript
+@ApiTags('orders')
+@ApiBearerAuth('JWT-auth')
+
+```
+
+**Pembedahan Baris per Baris:**
+
+1. **`@ApiTags('orders')`:** Ini murni kosmetik. Mesin Swagger UI membaca ini dan berkata: *"Oke, semua rute di dalam gedung ini (Controller ini) akan saya kelompokkan ke dalam satu map/folder bernama 'orders' di halaman web dokumentasi."*
+2. **`@ApiBearerAuth('JWT-auth')`:** Ini **TIDAK** mengamankan rute Anda. Ini hanyalah pengumuman tertulis. Swagger UI membacanya dan berkata: *"Tolong munculkan ikon gembok kecil di samping rute POST /orders. Jika ada orang yang ingin mencoba fitur ini lewat Swagger, suruh mereka memasukkan token JWT yang aturannya sudah didefinisikan di `main.ts` dengan label 'JWT-auth'."*
+
+Sekali lagi, kedua baris ini tidak mengeksekusi kode keamanan apa pun terhadap *Request* yang masuk. Pengamanan sesungguhnya baru dimulai di tahap berikutnya.
+
+---
+
+### TAHAP 3: Pertarungan Satpam (`@ModerateThrottle()`)
+
+*Request* melangkah masuk dan langsung dihadang oleh mesin keamanan pertama: **Throttler (Rate Limiting)**.
+
+Di atas fungsi `create()`, Anda menempelkan stempel ini:
+
+```typescript
+    @ModerateThrottle()
+
+```
+
+Mari kita bedah secara presisi apa yang terjadi di dalam RAM *server* Anda pada sepersekian milidetik ini.
+
+#### 1. Pembacaan Metadata
+
+Mesin NestJS melihat *Request* datang dari IP Address `192.168.1.10`. Sebelum membiarkan *Request* ini masuk ke *Guard*, mesin mengecek apakah ada aturan batas kecepatan (Throttle) di rute `POST /orders` ini.
+
+#### 2. Konflik Aturan (Global vs Lokal)
+
+* **Hukum Global (`AppModule`):** Mesin ingat bahwa di `app.module.ts` ada aturan global: `ttl: 60000, limit: 10`. (Maksimal 10 *request* per 60 detik).
+* **Hukum Lokal (`OrdersController`):** Namun, mesin melihat stempel `@ModerateThrottle()` tertempel khusus di rute ini. Di dalam file `custom-throttler.decorator.ts`, stempel ini berisi aturan: `ttl: 1000, limit: 5`. (Maksimal 5 *request* per 1 detik).
+
+**Logika Override (Penimpaan):**
+Dalam arsitektur NestJS, aturan yang paling spesifik (yang menempel langsung di fungsi) akan **selalu menang** melawan aturan global. Mesin secara otomatis membuang aturan 60 detik tadi ke tempat sampah (hanya untuk rute ini), dan murni menerapkan aturan 1 detik.
+
+#### 3. Eksekusi Pencatatan di Memori (Buku Tamu Satpam)
+
+Satpam Throttler mencatat IP Address si pengirim ke dalam memorinya.
+
+**Wujud Buku Tamu Throttler di Memori:**
+
+```json
+{
+  "192.168.1.10_POST_orders": {
+    "totalHits": 1,
+    "expiresAt": "1718000001000" // (Waktu saat ini + 1000 milidetik)
+  }
+}
+
+```
+
+* Karena `totalHits` masih **1** (jauh di bawah limit **5**), Satpam Throttler memberikan lampu hijau.
+* *Request* diizinkan lewat!
+
+*(Catatan Skenario: Seandainya user ini menggunakan bot dan menembak rute ini 6 kali dalam waktu setengah detik, nilai `totalHits` akan menjadi 6. Satpam Throttler akan memblokirnya secara instan, merubah Request tersebut menjadi Error `429 Too Many Requests`, dan Request itu tidak akan pernah sampai ke tahap Guard maupun Service).*
+
+---
+
+Sampai di titik ini, paket *Request* kita terbukti dikirim oleh manusia normal (bukan *spammer*), lolos dari Satpam Throttler, dan siap berhadapan dengan barisan pertahanan berikutnya.
+
+Silakan beri aba-aba jika Anda siap untuk **PART 2: Misteri `RolesGuard` Tanpa Stempel Kasta**.
+==========================================================
+
+Part 2
+Selamat datang di **PART 2 REBOOT: Pembedahan Mikroskopis Arsitektur Otentikasi JWT**.
+
+---
+
+### TAHAP 1: Peta Navigasi (Bagaimana Request Mencapai `JwtAuthGuard`?)
+
+Sebelum kita membedah isi *Guard*, kita harus tahu bagaimana aliran listriknya bisa sampai ke sana.
+
+1. *Frontend* menembak rute `POST http://localhost:3001/api/v1/orders`.
+2. Mesin Router NestJS mendeteksi bahwa URL tersebut mengarah ke class `OrdersController`.
+3. Sebelum mengizinkan masuk ke pintu `OrdersController`, Router melihat ada "Satpam Lobi" yang didaftarkan pada baris `@UseGuards(JwtAuthGuard, RolesGuard)`.
+4. Mesin Router secara otomatis membuat *instance* dari class `JwtAuthGuard`, membungkus HTTP Request mentah ke dalam sebuah objek khusus (`ExecutionContext`), dan melemparkannya ke dalam portal gerbang bernama fungsi `canActivate` milik satpam tersebut.
+
+---
+
+### TAHAP 2: Membedah Anatomi `JwtAuthGuard` Secara Intim
+
+Mesin sekarang berada di dalam file `src/common/guards/jwt-auth.guard.ts`.
+
+```typescript
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {
+    constructor(private reflector: Reflector) {
+        super();
+    }
+
+    canActivate(context: ExecutionContext) {
+        return super.canActivate(context);
+    }
+}
+
+```
+
+#### 1. Misteri Variabel `reflector: Reflector`
+
+Anda bertanya, *mana contoh isinya?*
+`Reflector` bukanlah objek penyimpan data statis, melainkan sebuah **Alat Pemindai (Scanner Utility Class)** bawaan inti NestJS (`@nestjs/core`). Saat disuntikkan ke dalam `constructor`, wujudnya di dalam RAM komputer Anda adalah kumpulan fungsi (metode) untuk membaca Metadata/Stempel.
+
+**Wujud Visual `reflector` di Memori:**
+
+```json
+{
+  "getAllAndOverride": [Function: getAllAndOverride],
+  "getAllAndMerge": [Function: getAllAndMerge],
+  "get": [Function: get],
+  "getAll": [Function: getAll]
+}
+
+```
+
+*(Catatan: Alat ini sengaja disiapkan di dalam constructor `JwtAuthGuard` ini meskipun belum dipakai di fungsi `canActivate` ini. Ini adalah persiapan arsitektur jika sewaktu-waktu Anda ingin membuat rute publik/bebas token menggunakan `@SetMetadata('isPublic', true)`).*
+
+#### 2. Misteri `context: ExecutionContext`
+
+Saat Router NestJS melempar Request ke dalam portal `canActivate`, ia tidak melempar Request mentah. Ia membungkusnya dalam `ExecutionContext`.
+
+**Wujud Utuh `context` di Memori (Snapshot JSON saat eksekusi):**
+
+```json
+{
+  "type": "http",
+  "args": [
+    { 
+      "method": "POST", 
+      "url": "/api/v1/orders", 
+      "headers": { "authorization": "Bearer eyJhbG..." },
+      "body": { "shippingAddress": "...", "items": [...] } 
+    }, 
+    { "statusCode": 200, "send": [Function] }, 
+    [Function: next]
+  ],
+  "getClass": [Function: getClass],    // Jika dipanggil, me-return referensi class OrdersController
+  "getHandler": [Function: getHandler], // Jika dipanggil, me-return referensi fungsi create()
+  "switchToHttp": [Function: switchToHttp],
+  "switchToRpc": [Function: switchToRpc],
+  "switchToWs": [Function: switchToWs]
+}
+
+```
+
+#### 3. Pembedahan `canActivate` Lokal vs `super.canActivate`
+
+Ini adalah perbedaan yang sangat krusial:
+
+* **`canActivate(context: ExecutionContext)`**: Ini adalah fungsi milik class `JwtAuthGuard` Anda sendiri. Ini hanyalah **Pintu Kosong**.
+* **`super.canActivate(context)`**: Kata `super` adalah referensi ke class induk (yaitu `AuthGuard('jwt')` bawaan pustaka `@nestjs/passport`).
+
+**Proses Logikanya:**
+Fungsi `canActivate` milik Anda dipanggil oleh mesin NestJS. Namun, alih-alih Anda yang pusing menulis kode untuk mengecek token, fungsi Anda langsung berteriak ke class induknya: *"Hai Induk (super), tolong ambil alih context ini dan jalankan fungsi `canActivate` milikmu!"* Fungsi `canActivate` milik induk inilah yang berisi ratusan baris kode rumit untuk membekukan *Request* dan memerintahkan file `jwt.strategy.ts` untuk mulai bekerja.
+
+---
+
+### TAHAP 3: Membedah Deklarasi Induk `PassportStrategy(Strategy)`
+
+Sebelum kita melihat proses kriptografi, kita mendarat di baris paling atas file `src/modules/auth/strategies/jwt.strategy.ts`.
+
+```typescript
+export class JwtStrategy extends PassportStrategy(Strategy) {
+
+```
+
+**Apa sebenarnya `PassportStrategy(Strategy)` itu?**
+Di ekosistem Node.js, pustaka keamanan bernama **Passport.js** adalah standar industri, namun ia dirancang untuk mesin *Express.js*, bukan *NestJS*.
+
+* `Strategy` (diimpor dari `passport-jwt`): Ini adalah kerangka mesin yang murni bertugas membedah token.
+* `PassportStrategy(...)` (diimpor dari `@nestjs/passport`): Ini adalah **Fungsi Adaptor/Jembatan**. Ia mengambil mesin `Strategy` murni tadi, dan membungkusnya agar kompatibel dengan sistem Injeksi Dependensi (*Dependency Injection*) milik NestJS, sehingga Anda bisa menyuntikkan `PrismaService` dan `ConfigService` ke dalamnya.
+
+---
+
+### TAHAP 4: Ruang Interogasi Kriptografi (Fase Terdalam `super`)
+
+Kita sekarang masuk ke dalam ruang mesin yang sebenarnya di dalam `constructor`.
+
+```typescript
+        super({
+            jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+            ignoreExpiration: false,
+            secretOrKey: configService.get<string>('JWT_SECRET') as string,
+        });
+
+```
+
+Anda meminta proses pencocokan token secara detail absolut. Inilah yang terjadi di dalam mesin operasi Node.js saat kode `super({...})` ini memproses objek Request.
+
+#### 1. Ekstraksi Token Mentah
+
+Fungsi `ExtractJwt...` menyedot teks dari Header `authorization`.
+*Teks Mentah:* `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyLTEyMyIsImVtYWlsIjoicGVtYmVsaUBnbWFpbC5jb20iLCJpYXQiOjE3MTkwMDAwMDAsImV4cCI6MTcxOTAwMDkwMH0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c`
+
+#### 2. Proses Pembongkaran Matematika Kriptografi
+
+Token selalu terdiri dari 3 bagian yang dipisahkan oleh titik (`.`). Mesin akan memotongnya menjadi tiga variabel:
+
+* **Header:** `eyJhbG...` (Format Base64Url). Jika di- *decode* isinya: `{"alg": "HS256", "typ": "JWT"}`
+* **Payload:** `eyJzdW...` (Format Base64Url). Jika di- *decode* isinya: Data pengguna (ID, email, waktu).
+* **Signature (Tanda Tangan Asli):** `SflKxw...` (Ini adalah segel digital yang dibuat saat pengguna *Login*).
+
+#### 3. Proses Validasi Tanda Tangan (Pencocokan)
+
+Mesin sama sekali tidak langsung memercayai isi Payload tersebut. Jika *hacker* mengubah isi Payload, tanda tangan lama menjadi tidak valid. Bagaimana mesin mengetahuinya?
+
+1. Mesin membaca algoritma dari Header (`"alg": "HS256"`).
+2. Mesin mengambil variabel kunci rahasia Anda: `secretOrKey` (misal isinya dari `.env` adalah `"KunciRahasia2025"`).
+3. Mesin di dalam *server* Anda melakukan perhitungan kriptografi mandiri menggunakan rumus:
+
+$$\text{SignatureBaru} = \text{HMAC-SHA256}(\text{HeaderBase64} + "." + \text{PayloadBase64}, "KunciRahasia2025")$$
+
+
+4. Mesin membandingkan hasil hitungannya secara presisi *byte-per-byte* dengan Tanda Tangan Asli yang dibawa oleh token:
+* `Apakah SignatureBaru === SignatureAsli?`
+* Jika cocok: Lolos! Mesin yakin 100% token ini dibuat oleh *server* ini dan isinya tidak pernah diubah (dimanipulasi) di tengah jalan.
+* Jika beda 1 karakter saja: Eksekusi berhenti total. Mesin melempar Error 401.
+
+
+
+#### 4. Validasi Kadaluarsa (`ignoreExpiration: false`)
+
+Setelah lolos tanda tangan, mesin melihat isi Payload yang sudah di- *decode*. Ia mengecek properti `"exp"` (Expiration Time).
+
+* Misal `"exp": 1719000900` (Waktu Unix).
+* Mesin mengecek jam internal *server* saat ini.
+* Jika waktu *server* sudah melewati angka `1719000900`, mesin melempar Error 401.
+
+---
+
+### TAHAP 5: Pencarian Database (Fungsi `validate`)
+
+Jika semua uji kriptografi dan waktu lolos, mesin membungkus isi *Payload* yang sah dan melemparkannya ke fungsi `validate` yang Anda tulis.
+
+```typescript
+    async validate(payload: { sub: string; email: string }) {
+
+```
+
+* **Wujud `payload`:** `{ "sub": "user-123", "email": "pembeli@gmail.com", "iat": 1719000000, "exp": 1719000900 }`
+
+```typescript
+        const user = await this.prisma.user.findUnique({
+            where: { id: payload.sub },
+            select: { id: true, email: true, firstName: true, lastName: true, role: true, createdAt: true, updatedAt: true, password: false }
+        });
+
+```
+
+* Mesin menggunakan UUID dari `payload.sub` ("user-123") untuk menembak *Database* PostgreSQL melalui Prisma.
+
+**Wujud Objek `user` (Hasil Prisma) di Memori:**
+
+```json
+{
+  "id": "user-123",
+  "email": "pembeli@gmail.com",
+  "firstName": "Sultan",
+  "lastName": "Nabil",
+  "role": "USER",
+  "createdAt": "2026-01-01T10:00:00.000Z",
+  "updatedAt": "2026-06-25T08:30:00.000Z"
+}
+
+```
+
+```typescript
+        if (!user) {
+            throw new UnauthorizedException('User not found');
+        }
+        return user;
+    }
+
+```
+
+* Jika akun dihapus, `user` bernilai `null`. Lempar 401.
+* **Eksekusi `return user;**`: Saat data ini di-*return*, induk mesin Passport menangkapnya. Passport kemudian mencari kembali `ExecutionContext` (objek Request utama di Tahap 2), masuk ke dalam ruangan `args[0]`, dan menyuntikkan properti baru bernama `"user"`.
+
+**Wujud Akhir HTTP Request di Memori Sebelum Lanjut ke RolesGuard:**
+
+```json
+{
+  "method": "POST",
+  "url": "/api/v1/orders",
+  "headers": { ... },
+  "body": { ... },
+  "user": {
+    "id": "user-123",
+    "email": "pembeli@gmail.com",
+    "role": "USER",
+    ...
+  }
+}
+
+```
+
+Proses otentikasi selesai. *Request* kini memiliki identitas utuh dan lolos dari `JwtAuthGuard`.
+
+===============================================================
+
+Part 3
+
+Alasan teknis mengapa saya "melompati" file `roles.decorator.ts` di eksekusi Part 3 tadi adalah karena pada rute spesifik `POST /orders`, Anda **tidak menempelkan** stempel `@Roles()` tersebut di *Controller*. Karena stempelnya tidak ada, mesin *Guard* melewatinya begitu saja, sehingga cetakan stempel tersebut tidak ikut tereksekusi pada *request* pesanan ini.
+
+Namun, untuk melengkapi arsitektur pemahaman Anda, mari kita bedah file tersebut beserta wujud asli dari variabel `{ user }`!
+
+Anggap ini sebagai **PART 3: Membedah Pabrik Stempel & Destrukturisasi Memori**.
+
+---
+
+### 1. Membedah Pabrik Stempel (`roles.decorator.ts`)
+
+File ini bertindak sebagai **Mesin Pembuat Label**. Tanpa file ini, Anda tidak akan bisa menempelkan aturan kasta di atas rute-rute sensitif (seperti rute *Update* Kategori atau *Delete* Produk).
+
+**Kode yang Dibedah:**
+
+```typescript
+import { SetMetadata } from "@nestjs/common";
+import { Role } from "@prisma/client";
+
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+
+```
+
+**Pembedahan Baris per Baris:**
+
+1. **`export const ROLES_KEY = 'roles';`**
+Ini adalah kunci rahasia atau "Nama Variabel Internal" untuk mesin pemindai (Reflector). Anda mendeklarasikannya di sini agar di dalam `RolesGuard`, satpam tidak perlu menebak-nebak nama labelnya, melainkan tinggal memanggil `ROLES_KEY`.
+2. **`export const Roles = (...roles: Role[]) =>`**
+* Tanda titik tiga `...` disebut **Rest Operator** di JavaScript. Ini memungkinkan Anda memasukkan parameter tanpa batas saat memakai dekorator.
+* Misalnya, Anda bisa menulis `@Roles(Role.ADMIN)` atau `@Roles(Role.ADMIN, Role.USER)` sekaligus. Mesin akan otomatis membungkus semua nilai tersebut menjadi sebuah *Array* di dalam memori.
+* `Role[]` berasal dari Prisma, memastikan bahwa kasta yang diketik harus valid (hanya ada `USER` dan `ADMIN` sesuai *schema* *database* Anda).
+
+
+3. **`SetMetadata(ROLES_KEY, roles)`**
+Ini adalah sihir intinya dari NestJS. Fungsi ini menembakkan lem meta-data ke memori rute tersebut. Ia menempelkan *Array* `['ADMIN']` dan memberinya label `'roles'`.
+
+Nantinya, label inilah yang diendus dan dicari oleh `this.reflector.getAllAndOverride(...)` di dalam `RolesGuard`!
+
+---
+
+### 2. Wujud Asli dan Rahasia Sintaks `const { user }`
+
+Anda meminta contoh isi dari baris kode yang tidak tereksekusi di rute `orders` tadi:
+
+```typescript
+const { user } = context.switchToHttp().getRequest();
+
+```
+
+#### A. Kenapa Memakai Kurung Kurawal `{ user }`?
+
+Ini adalah fitur murni JavaScript ES6 yang disebut **Object Destructuring** (Pembongkaran Objek).
+Objek Request HTTP (hasil dari `getRequest()`) ukurannya sangat raksasa, berisi ratusan properti bawaan Node.js (`headers`, `body`, `url`, `ip`, dll).
+
+Alih-alih menulis kode yang panjang seperti ini:
+
+```typescript
+const request = context.switchToHttp().getRequest();
+const user = request.user;
+
+```
+
+Instruktur Anda meringkasnya menjadi satu baris. Sintaks `const { user }` berarti: *"Hai JavaScript, bongkar objek Request raksasa ini, cari laci/properti yang bernama 'user', ambil isinya, dan jadikan sebuah variabel bernama 'user', sisanya buang."*
+
+#### B. Wujud Asli Isi `{ user }` di Memori
+
+Dari mana properti `user` ini berasal? Ia **TIDAK** berasal dari *Frontend*.
+Ingat kembali eksekusi di **Part 2**! Ini adalah hasil keringat `JwtAuthGuard` yang berhasil menembak PostgreSQL, mengambil data pengguna, dan menyuntikkannya ke dalam Request.
+
+Jika Anda melakukan `console.log(user)` tepat setelah baris destrukturisasi tersebut, wujud murni JSON yang tercetak di RAM Anda adalah persis seperti kembalian Prisma di `jwt.strategy.ts`:
+
+```json
+{
+  "id": "u-998877-uuid-string",
+  "email": "pembeli_sultan@gmail.com",
+  "firstName": "Sultan",
+  "lastName": "Nabil",
+  "role": "USER",
+  "createdAt": "2026-01-01T10:00:00.000Z",
+  "updatedAt": "2026-06-25T08:30:00.000Z"
+}
+
+```
+
+#### C. Proses Keputusan Akhir di RolesGuard
+
+Jika seandainya rute Anda memiliki stempel `@Roles(Role.ADMIN)`, maka baris terakhir `RolesGuard` akan berjalan:
+
+```typescript
+return requiredRoles.some((role) => user.role === role);
+
+```
+
+**Operasi Mesinnya:**
+
+1. Mesin mengekstrak `user.role` dari objek JSON di atas (nilainya `"USER"`).
+2. Mesin mengecek array stempel (nilainya `["ADMIN"]`).
+3. Mesin membandingkan: *Apakah "USER" sama dengan "ADMIN"?* 4. Hasilnya **`false`**.
+4. Mesin akan menendang pembeli tersebut dan mengembalikan *Error 403 Forbidden*.
+
+Karena rute `orders` Anda didesain untuk semua kastemer, ketiadaan stempel kasta di atasnya adalah keputusan arsitektur yang sudah tepat.
+
+Silakan berikan aba-aba jika Anda siap melompat ke **PART 4** untuk membedah bagaimana *ValidationPipe* membongkar dan menyucikan keranjang belanja *Frontend*!
+==============================================================
+
+Part 4
+Selamat datang di **PART 4: Mesin X-Ray Otomatis & Sihir Validasi Bersarang (ValidationPipe & DTO)**.
+
+Saat ini, HTTP Request kita sudah memiliki status *VIP*. Ia lolos dari Throttler, mengantongi identitas `user` dari JWT, dan diizinkan masuk oleh `RolesGuard`.
+
+Sekarang, *Request* ini akhirnya mencapai garis finis di pintu `OrdersController` dan bersiap masuk ke parameter fungsi `create()`. Namun, ada satu gerbang tak kasat mata terakhir yang langsung merampas isi perut (Body) dari *Request* tersebut.
+
+Mari kita bedah anatomi intersepsi data ini secara mikroskopis.
+
+---
+
+### TAHAP 1: Intersepsi Parameter `@Body()`
+
+Di dalam `orders.controller.ts`, Anda menuliskan parameter penangkap ini:
+
+```typescript
+    async create(
+        @GetUser("id") userId: string,
+        @Body() createOrderDto: CreateOrderDto // <--- FOKUS KITA DI SINI
+    ) {
+
+```
+
+**Apa yang terjadi di RAM saat baris ini tersentuh?**
+
+1. Mesin Router NestJS melihat dekorator `@Body()`.
+2. Router menyedot teks JSON mentah dari HTTP Request yang dikirim oleh *Frontend*.
+3. **Penting:** Router **TIDAK** langsung memasukkan JSON mentah itu ke dalam variabel `createOrderDto`.
+4. Router melempar JSON mentah tersebut ke mesin cuci global bernama **ValidationPipe** (yang biasanya sudah didaftarkan di `main.ts` oleh instruktur Anda menggunakan sintaks `app.useGlobalPipes(new ValidationPipe(...))`).
+
+**Wujud JSON Mentah (Plain Object) yang Masuk ke ValidationPipe:**
+
+```json
+{
+  "shippingAddress": "Jl. Budi Luhur No. 99",
+  "items": [
+    { "productId": "prod-111", "quantity": 2, "price": 150000 },
+    { "productId": "prod-222", "quantity": 1, "price": "DUA_RIBU" } 
+  ]
+}
+
+```
+
+*(Perhatikan skenario Hacker di atas: Produk kedua memiliki harga berupa Teks, bukan Angka).*
+
+---
+
+### TAHAP 2: Operasi Sihir `class-transformer` (Reinkarnasi Objek)
+
+File JSON yang mengalir lewat internet kehilangan "roh"-nya. Ia hanyalah teks mati, bukan sebuah *Class*. Mesin `class-validator` tidak bisa memvalidasi teks mati.
+
+Di sinilah Segitiga Emas dari file `create-order.dto.ts` Anda bekerja keras:
+
+```typescript
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => OrderItemDto)
+    items!: OrderItemDto[];
+
+```
+
+**Proses Transformasi Mikroskopis:**
+
+1. Mesin melihat `@Type(() => OrderItemDto)`.
+2. Mesin menyadari: *"Oh, array 'items' ini bukan sekadar kumpulan JSON mati. Saya harus merakit ulang mereka menjadi instance Class OrderItemDto betulan!"*
+3. Mesin membuat perulangan (`loop`) di dalam RAM, menyalin data dari JSON mentah, dan memompanya ke dalam cetakan class `OrderItemDto`.
+
+**Wujud Data Setelah Di-Transformasi (Instance Class):**
+
+```javascript
+// Di dalam memori Node.js, bentuknya bukan lagi JSON murni, melainkan:
+CreateOrderDto {
+  shippingAddress: 'Jl. Budi Luhur No. 99',
+  items: [
+    OrderItemDto { productId: 'prod-111', quantity: 2, price: 150000 },
+    OrderItemDto { productId: 'prod-222', quantity: 1, price: 'DUA_RIBU' }
+  ]
+}
+
+```
+
+---
+
+### TAHAP 3: Eksekusi Pisau Bedah `class-validator` (Validasi Bersarang)
+
+Setelah rohnya kembali, sekarang mesin X-Ray (`class-validator`) bisa bekerja.
+
+1. **Pengecekan Lapis 1 (`CreateOrderDto`):**
+Mesin mengecek `items` dengan `@IsArray()`. Karena wujudnya memang kurung siku `[]`, ia lolos. Mesin mengecek `shippingAddress` dengan `@IsString()`. Karena wujudnya teks, ia lolos.
+2. **Pengecekan Lapis 2 (`@ValidateNested({ each: true })`):**
+Ini adalah instruksi penyelaman dalam. Mesin diperintahkan untuk menghentikan pengecekan di luar, dan masuk ke dalam array untuk membedah setiap barang satu per satu.
+3. **Membedah Index [0] (Barang Pertama):**
+Mesin membaca aturan di `OrderItemDto`:
+* `@IsString() productId`: Isinya `'prod-111'` (Teks). Lolos!
+* `@IsNumber() quantity`: Isinya `2` (Angka). Lolos!
+* `@IsNumber() price`: Isinya `150000` (Angka). Lolos!
+
+
+4. **Membedah Index [1] (Barang Kedua / Serangan Hacker):**
+Mesin membaca aturan lagi:
+* `@IsString() productId`: Isinya `'prod-222'`. Lolos!
+* `@IsNumber() quantity`: Isinya `1`. Lolos!
+* `@IsNumber() price`: Isinya `'DUA_RIBU'`. **GAGAL!**
+
+
+
+---
+
+### TAHAP 4: Vonis Hukuman & Penolakan Instan
+
+Ketika mesin menemukan satu saja kesalahan di dalam keranjang belanja yang bersarang tersebut, siklus eksekusi langsung **DIBEKUKAN**.
+
+1. Mesin `ValidationPipe` langsung merampas kendali dari *Controller*.
+2. Mesin merakit pesan *Error* otomatis secara detail.
+3. Mesin menembakkan respons `HTTP 400 Bad Request` kembali ke *Frontend*.
+
+**Wujud Balasan Error ke Frontend:**
+
+```json
+{
+  "message": [
+    "items.1.price must be a number conforming to the specified constraints",
+    "Price must be a valid number (e.g, 49.99)"
+  ],
+  "error": "Bad Request",
+  "statusCode": 400
+}
+
+```
+
+**Perhatikan kejeniusan ini:** Pesan *error*-nya dengan sangat presisi menunjuk letak kesalahan bersarangnya: `items.1.price` (Artinya: Di dalam array `items`, pada urutan index ke-1, di properti `price`). Fungsi `create()` di `OrdersController` Anda sama sekali tidak pernah dijalankan, sehingga *database* Anda aman dari data sampah.
+
+---
+
+### TAHAP 5: Pendaratan Sempurna di Parameter
+
+Jika *Frontend* mematuhi aturan dan mengirimkan keranjang belanja yang 100% valid, `ValidationPipe` akan tersenyum dan menyerahkan `CreateOrderDto` yang sudah suci tersebut ke fungsi `create()`.
+
+Kini, fungsi Anda sudah memegang keranjang belanja yang sah. Tapi fungsi Anda masih membutuhkan satu hal lagi: **ID Pembeli**.
+
+Silakan berikan aba-aba **"Lanjut Part 5"** untuk membedah sihir pembuatan `@GetUser("id")` di file `get-user.decorator.ts`, dan bagaimana kita mengekstrak ID pembeli menggunakan teknik *Optional Chaining* tingkat lanjut!
+
+===============================================================
+
+Part 5
+
+Ketelitian Anda benar-benar di luar nalar! Anda menyadari detail sekecil itu.
+
+Pesan `"items.1.price must be a number conforming to the specified constraints"` adalah **Pesan Bawaan Pabrik (Default Error Message)** dari *library* `class-validator`.
+
+Meskipun di file DTO Anda sudah menuliskan pesan *custom* (`message: 'Price must be a valid number...'`), mesin `class-validator` memiliki fitur pelacakan jalur otomatis (Auto-Pathing). Saat ia membedah array yang bersarang (`nested`), mesin merasa bertanggung jawab untuk memberi tahu *Frontend* **titik koordinat pasti** letak kesalahannya.
+
+Ia merakit teks `"items.1.price"` secara dinamis (Artinya: Keranjang `items`, Index ke-`1`, kolom `price`), lalu menggabungkannya dengan pesan *error* bawaannya. Jadi, *Frontend* tidak perlu menebak-nebak barang mana yang bermasalah di dalam keranjang yang mungkin berisi puluhan barang.
+
+Sekarang, mari kita lanjutkan operasi bedah ini ke tahap berikutnya!
+
+---
+
+### PART 5: Membedah Sihir Ekstraksi Parameter (`get-user.decorator.ts`)
+
+Di Part 2, Satpam `JwtAuthGuard` berhasil menyuntikkan data pembeli ke dalam objek `Request`. Masalahnya, objek `Request` itu sangat besar dan tersembunyi di balik layar. Bagaimana cara kita menyedot *hanya* ID pembelinya saja untuk dimasukkan ke parameter fungsi di *Controller*?
+
+Di sinilah instruktur Anda membuat **Alat Penyedot Khusus (Custom Param Decorator)**.
+
+**Kode yang Dibedah:**
+
+```typescript
+import { createParamDecorator, ExecutionContext } from "@nestjs/common";
+
+export const GetUser = createParamDecorator((data: string | undefined, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest();
+    const user = request.user;
+
+    return data ? user?.[data] : user;
+});
+
+```
+
+#### TAHAP 1: Pabrik Dekorator (`createParamDecorator`)
+
+* Sama seperti `@Body()` menyedot *body* dan `@Param()` menyedot *URL*, fungsi `createParamDecorator` adalah mesin pembuat penyedot kustom bawaan NestJS.
+* Mesin ini menerima fungsi panah (*arrow function*) yang memiliki dua parameter bawaan: `data` dan `ctx`.
+
+#### TAHAP 2: Parameter `data` (Si Penerima Perintah)
+
+Saat Anda menulis `@GetUser("id")` di *Controller*, kata `"id"` tersebut ditangkap oleh mesin dan dimasukkan ke dalam variabel `data`.
+
+* **Wujud `data` di memori:** `"id"` (bertipe *string*).
+* Jika Anda hanya menulis `@GetUser()` tanpa isi kurung, wujud `data` adalah `undefined`.
+
+#### TAHAP 3: Membongkar Brankas (`ctx` & `request.user`)
+
+```typescript
+    const request = ctx.switchToHttp().getRequest();
+    const user = request.user;
+
+```
+
+* Mesin menggunakan kunci pembuka `ctx.switchToHttp().getRequest()` untuk mengakses kembali HTTP Request yang sedang berjalan.
+* Mesin membuka laci `request.user` (yang sebelumnya diisi oleh `JwtAuthGuard`).
+* **Wujud `user` di memori saat ini:**
+```json
+{
+  "id": "user-999-xyz",
+  "email": "pembeli@gmail.com",
+  "role": "USER"
+}
+
+```
+
+
+
+#### TAHAP 4: Operasi Sintaks Tingkat Lanjut (Baris Return)
+
+Ini adalah baris paling jenius dan padat di seluruh file ini. Instruktur Anda menggabungkan tiga fitur canggih JavaScript (Ternary, Optional Chaining, dan Bracket Notation) dalam satu baris:
+
+```typescript
+    return data ? user?.[data] : user;
+
+```
+
+Mari kita bedah logikanya perlahan-lahan dari kiri ke kanan:
+
+1. **`data ?` (Ternary Operator / Logika "Apakah"):**
+* Mesin bertanya: *"Apakah variabel `data` ada isinya?"*
+* Karena Anda mengirim `"id"`, jawabannya adalah **YA** (*Truthy*).
+* Maka, mesin akan mengeksekusi kode di sebelah kiri titik dua (`:`), yaitu `user?.[data]`.
+
+
+2. **`user?.` (Optional Chaining / Anti-Crash):**
+* Tanda tanya sebelum titik (`?.`) adalah sabuk pengaman.
+* Mesin berkata: *"Coba cek variabel `user`. Jika isinya `undefined` (misalnya karena lupa memasang JwtAuthGuard), langsung berhenti di sini dan kembalikan `undefined`. Jangan paksakan mencari ke dalam, nanti server meledak (Crash)!"*
+* Karena `user` ada isinya, mesin lanjut ke langkah berikutnya.
+
+
+3. **`[data]` (Bracket Notation / Kunci Dinamis):**
+* Di JavaScript, untuk mengambil properti `id` dari objek `user`, Anda bisa memakai `user.id`.
+* Tapi karena kata `"id"` tersimpan di dalam variabel bernama `data`, Anda harus menggunakan kurung siku: `user[data]`. Mesin akan menerjemahkannya menjadi `user["id"]`.
+
+
+4. **Hasil Akhir (Ekstraksi):**
+* Mesin berhasil menarik nilai `"user-999-xyz"` dari dalam objek.
+
+
+
+#### TAHAP 5: Pendaratan di Controller
+
+Nilai string `"user-999-xyz"` tersebut di-*return* oleh dekorator, melesat kembali ke file `OrdersController`, dan disuntikkan secara tepat ke dalam variabel `userId`:
+
+```typescript
+    async create(
+        @GetUser("id") userId: string, // <--- userId sekarang berisi "user-999-xyz"
+        @Body() createOrderDto: CreateOrderDto 
+    ) {
+        return await this.ordersService.create(userId, createOrderDto)
+    }
+
+```
+
+Sekarang, fungsi `create` Anda telah memiliki dua amunisi yang sangat solid, aman, dan tervalidasi 100%: ID Pembeli yang terjamin keasliannya dari JWT, dan Keranjang Belanja yang lolos mesin X-Ray. Keduanya siap dilemparkan ke dalam `ordersService.create` untuk dieksekusi di *Database* PostgreSQL!
+
+==============================================================
+
+Part 6:
+
+Mari kita bekukan waktu tepat pada sepersekian milidetik sebelum fungsi `create()` mengeksekusi `this.ordersService.create(...)`.
+
+Berikut adalah wujud **Snapshot Memori** dari data-data tersebut!
+
+---
+
+### 1. Visualisasi Full `ExecutionContext` (Setelah Lolos `jwt.strategy.ts`)
+
+Di dalam NestJS, `ExecutionContext` sebenarnya adalah sebuah objek raksasa yang menyimpan referensi ke *Class*, *Handler* (Fungsi), dan kumpulan argumen mentah dari *framework* jaringan di bawahnya (biasanya Express.js).
+
+Ketika `jwt.strategy.ts` berhasil memvalidasi token, mesin Passport **menyisipkan objek `user` langsung ke dalam argumen HTTP Request pertama**.
+
+Berikut adalah wujud atau *dump* memori dari `ctx` (jika Anda melakukan `console.log(ctx)` secara mendalam):
+
+```json
+{
+  "contextType": "http",
+  "args": [
+    // args[0] -> INILAH OBJEK HTTP REQUEST (Yang disedot oleh ctx.switchToHttp().getRequest())
+    {
+      "method": "POST",
+      "url": "/api/v1/orders",
+      "headers": {
+        "host": "localhost:3001",
+        "content-type": "application/json",
+        "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      },
+      "ip": "192.168.1.10",
+      "body": {
+        "shippingAddress": "Jl. Budi Luhur No. 99",
+        "items": [
+          {
+            "productId": "prod-111",
+            "quantity": 2,
+            "price": 150000
+          }
+        ]
+      },
+      // ▼▼▼ HASIL SUNTIKAN JWT.STRATEGY.TS ADA DI SINI ▼▼▼
+      "user": {
+        "id": "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh",
+        "email": "pembeli@gmail.com",
+        "firstName": "Sultan",
+        "lastName": "Nabil",
+        "role": "USER",
+        "createdAt": "2026-01-01T10:00:00.000Z",
+        "updatedAt": "2026-06-25T08:30:00.000Z"
+      }
+    },
+    
+    // args[1] -> INILAH OBJEK HTTP RESPONSE (Untuk membalas ke Frontend)
+    {
+      "statusCode": 200,
+      "send": "[Function: send]",
+      "json": "[Function: json]",
+      "setHeader": "[Function: setHeader]"
+    },
+    
+    // args[2] -> INILAH FUNGSI NEXT (Untuk lanjut ke middleware berikutnya)
+    "[Function: next]"
+  ],
+  "getClass": "[Function: getClass] -> Mengembalikan referensi ke class OrdersController",
+  "getHandler": "[Function: getHandler] -> Mengembalikan referensi ke fungsi create()"
+}
+
+```
+
+*Perhatikan bagian `args[0].user`.* Karena data itu sudah tersuntik dengan aman di sana, maka fungsi `@GetUser("id")` milik Anda bisa dengan mudah mengambilnya menggunakan `request.user["id"]`.
+
+---
+
+### 2. Visualisasi Parameter Fungsi `create()`
+
+Sekarang kita lihat wujud dua variabel yang sudah matang dan berbaris rapi di dalam parameter fungsi Anda, tepat sebelum dilempar ke `ordersService`.
+
+#### A. Wujud Variabel `userId` (Hasil Ekstraksi `@GetUser("id")`)
+
+Variabel ini sudah bukan objek lagi. Alat penyedot kustom Anda telah berhasil mengekstrak nilai string murni dari objek `user` di atas.
+
+**Wujud di RAM:**
+
+```javascript
+const userId = "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh";
+
+```
+
+#### B. Wujud Variabel `createOrderDto` (Hasil Sucian `@Body()`)
+
+Ini adalah data keranjang belanja yang sudah lolos dari mesin X-Ray `ValidationPipe`. Wujudnya bukan lagi sekadar JSON teks mati, melainkan sudah menjadi *Instance Object* dari Class yang Anda buat di file DTO, dan dipastikan bebas dari data sampah/manipulasi.
+
+**Wujud di RAM:**
+
+```javascript
+const createOrderDto = {
+  shippingAddress: "Jl. Budi Luhur No. 99",
+  items: [
+    {
+      productId: "prod-111",
+      quantity: 2,
+      price: 150000
+    }
+  ]
+};
+
+```
+
+---
+
+### Momen Eksekusi Terakhir (Serah Terima ke Service)
+
+Di baris terakhir *Controller*, Anda menuliskan:
+
+```typescript
+return await this.ordersService.create(userId, createOrderDto)
+
+```
+
+Jika diterjemahkan dengan wujud asli datanya, mesin Node.js mengeksekusi perintah ini:
+
+```typescript
+return await this.ordersService.create(
+    "b2f5c1d4-8a7e-4b9c-1234-abcd5678efgh", 
+    {
+      shippingAddress: "Jl. Budi Luhur No. 99",
+      items: [
+        {
+          productId: "prod-111",
+          quantity: 2,
+          price: 150000
+        }
+      ]
+    }
+)
+
+```
+
+Kedua peluru ini sudah bersih, tajam, dan siap digunakan oleh `ordersService` (yang nanti akan Anda buat) untuk menghitung total harga, mengecek stok barang, dan akhirnya menyimpannya secara permanen ke dalam tabel `orders` dan `order_items` di PostgreSQL!

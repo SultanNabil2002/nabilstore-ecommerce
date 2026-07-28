@@ -1,0 +1,264 @@
+PROMPT:
+next pada sintaks ini:
+async findAll(
+        userId: string,
+        query: QueryOrderDto,
+    ): Promise<{
+        data: OrderResponseDto[];
+        total: number;
+        page: number;
+        limit: number;
+    }> {
+        const { page = 1, limit = 10, status, search } = query
+        const skip = (page - 1) * limit;
+
+        const where: any = { userId };
+        if (status) where.status = status;
+        if (search) where.OR = [{ id: { contains: search, mode: 'insensitive' } }];
+
+        const [orders, total] = await Promise.all([
+            this.prisma.order.findMany({
+                where,
+                skip,
+                take: limit,
+                include: {
+                    orderItems: {
+                        include: {
+                            product: true,
+                        }
+                    },
+                    user: true
+                },
+                orderBy: { createdAt: 'desc' }
+            }),
+            this.prisma.order.count({ where })
+        ]);
+
+        return {
+            data: orders.map((o) => this.map(o)),
+            total,
+            page,
+            limit
+        }
+    }
+
+coba anda jelaskan pelan pelan dengan lebih detil, seperti, misal di baris kode ini:
+ this.prisma.order.findMany({
+                where,
+                skip,
+                take: limit,
+                include: {
+                    orderItems: {
+                        include: {
+                            product: true,
+                        }
+                    },
+                    user: true
+                },
+disini kita mengambil semua data yang ada di tabel order (tunjukkan tabel order dengan 5 buah data lengkap dengan isinya, pastikan semua kolomnya terisi jangan ada yang dihilangkan hanyak karena menghemat/mempersingkat penjelasan), mengambil semua data yang ada di tabel order yang status'nya = ?, userId = ?, search nya yang berisi id = ? jelaskan bahwa ini semua menggunakan operator && dan bukan OR karena di dalam OR[] hanya ada 1 data jadi OR otomatis true?(jelaskan jika saya salah). setelah semua data di tabel order di ambil, lihat sintaks berikutnya, misalkan yang baris bawahnya dulu(user) include: { user: true } maka kita ke tabel order lagi cari yang userId nya sama dengan userId yang didalam where tadi, jika sudah karena ini merupakan kolom yang berkaitan dengan tabel user(jelaskan dengan bahasa anda  sendiri yang lebih mudah dimengerti) maka kita ke tabel user ambil semua data di tabel user yang nilai id nya sama dengan userId di tabel order(jelaskan lebih detail lanjutannya saya capek nulisnya), intinrya include orderItem gitu juga. penjelasan seperti ini sepertinya lebih memudahkan saya untuk mendapatkan gambar tentang apa yang terjadi. saya yakin jawabannya akan panjang jadi bikin ber part part saja, anda yang persiapkan.
+
+ dan jangan dijawb sekarang, karena saya ingin istirahat. nanti akan saya jawab Mulai jika saya sudah siap. beri saya aba abanya agar saat saya buka gemini saya tidak lupa dengan ini.
+================================================================
+JAWABAN:
+PART 1:
+
+Selamat datang kembali, Sultan! Ruang operasi sudah disiapkan, dan mesin pemindai *database* sudah dihidupkan.
+
+Mari kita mulai **PART 1: Simulasi Wujud Tabel Order (5 Baris Data Lengkap) & Eksekusi Penyaringan `where**`.
+
+Untuk mendapatkan gambaran visual yang sempurna, kita harus melihat wujud asli tabel `Order` di dalam *hard drive* PostgreSQL Anda sebelum Prisma melakukan pencarian apa pun.
+
+### 1. Wujud Asli Tabel `Order` di Database
+
+Anggaplah di dalam tabel `Order` Anda saat ini terdapat tepat 5 baris data. Saya menampilkan **seluruh kolom** tanpa ada yang disembunyikan agar Anda bisa melihat apa yang dilihat oleh mesin *database*.
+
+| id | userId | status | totalAmount | shippingAddress | cartId | createdAt | updatedAt |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `order-123` | `user-sultan` | `PENDING` | 150000 | Jl. Budi Luhur 1 | `cart-1` | 2026-06-29T10:00 | 2026-06-29T10:00 |
+| `order-456` | `user-budi` | `PENDING` | 50000 | Jl. Sudirman 2 | `cart-2` | 2026-06-29T11:00 | 2026-06-29T11:00 |
+| `order-789` | `user-sultan` | `SHIPPED` | 300000 | Jl. Budi Luhur 1 | `cart-3` | 2026-06-28T09:00 | 2026-06-29T08:00 |
+| `order-999` | `user-sultan` | `PENDING` | 75000 | Jl. Budi Luhur 1 | `null` | 2026-06-30T07:00 | 2026-06-30T07:00 |
+| `ord-123-x` | `user-sultan` | `PENDING` | 200000 | Jl. Budi Luhur 1 | `cart-5` | 2026-06-30T08:00 | 2026-06-30T08:00 |
+
+---
+
+### 2. Skenario Pencarian (Kardus `where`)
+
+Mari kita asumsikan Anda (sebagai *user* yang sedang *login*) melakukan pencarian di aplikasi *Frontend* dengan URL:
+`GET /orders?status=PENDING&search=123`
+
+Sesuai kode di *Controller* dan *Service* Anda, mesin merakit kardus `where` menjadi seperti ini di RAM:
+
+```json
+{
+  "userId": "user-sultan", 
+  "status": "PENDING",
+  "OR": [
+    { "id": { "contains": "123", "mode": "insensitive" } }
+  ]
+}
+
+```
+
+---
+
+### 3. Membongkar Misteri Logika `AND` & `OR` Tunggal
+
+Anda bertanya di sesi sebelumnya: *"Jelaskan bahwa ini semua menggunakan operator && dan bukan OR karena di dalam OR[] hanya ada 1 data jadi OR otomatis true? (jelaskan jika saya salah)."*
+
+**Anda SANGAT JENIUS karena menyadari kejanggalan ini, tapi logika "Otomatis True" itu sedikit kurang tepat.** Mari kita luruskan bagaimana mesin *Database* membacanya.
+
+Karena `userId`, `status`, dan `OR` berada sejajar (satu level) di dalam kurung kurawal utama, mesin menerapkan hukum **Wajib Semuanya (`&&` / `AND`)**.
+Mesin membacanya menjadi rumus matematika:
+`Syarat 1 (userId === 'user-sultan') AND Syarat 2 (status === 'PENDING') AND Syarat 3 (OR)`
+
+**Lalu, apa yang terjadi pada `OR` yang isinya cuma 1 data?**
+Jika *Array* `OR` hanya berisi 1 buah data, fungsi "ATAU" tersebut kehilangan maknanya. Ia **TIDAK** otomatis menjadi *true* dan dilewati begitu saja. Sebaliknya, ia berubah wujud menjadi **Syarat Wajib (AND) biasa**!
+
+Jadi rumus akhirnya diubah oleh mesin menjadi:
+`Wajib milik 'user-sultan' AND Wajib berstatus 'PENDING' AND Wajib id-nya mengandung '123'`
+
+---
+
+### 4. Eksekusi Penyaringan (Gugur Bertahap)
+
+Sekarang, mesin Prisma membawa rumus mutlak di atas dan mendatangi 5 baris data di tabel `Order` tadi satu per satu.
+
+* **Baris 1 (`order-123` | `user-sultan` | `PENDING`):**
+* Apakah `userId` == `user-sultan`? **YA**
+* Apakah `status` == `PENDING`? **YA**
+* Apakah `id` mengandung "123"? **YA**
+* **VONIS: LOLOS! (Disimpan ke memori sementara)**
+
+
+* **Baris 2 (`order-456` | `user-budi` | `PENDING`):**
+* Apakah `userId` == `user-sultan`? **TIDAK!** (Ini milik Budi).
+* **VONIS: DITENDANG!** (Mesin langsung berhenti mengecek syarat sisanya karena ini Gembok Mutlak).
+
+
+* **Baris 3 (`order-789` | `user-sultan` | `SHIPPED`):**
+* Apakah `userId` == `user-sultan`? **YA**
+* Apakah `status` == `PENDING`? **TIDAK!** (Statusnya SHIPPED).
+* **VONIS: DITENDANG!**
+
+
+* **Baris 4 (`order-999` | `user-sultan` | `PENDING`):**
+* Apakah `userId` == `user-sultan`? **YA**
+* Apakah `status` == `PENDING`? **YA**
+* Apakah `id` mengandung "123"? **TIDAK!** (ID-nya 999).
+* **VONIS: DITENDANG!**
+
+
+* **Baris 5 (`ord-123-x` | `user-sultan` | `PENDING`):**
+* Apakah `userId` == `user-sultan`? **YA**
+* Apakah `status` == `PENDING`? **YA**
+* Apakah `id` mengandung "123"? **YA**
+* **VONIS: LOLOS!**
+
+
+
+**Hasil Akhir Fase 1:**
+Dari 5 baris data di tabel, Prisma hanya membawa **2 baris data** (`order-123` dan `ord-123-x`). Sisa 3 data lainnya sudah hangus dan tidak akan pernah diproses lagi.
+
+Data yang lolos ini barulah data dari tabel `Order` saja (belum termasuk data User dan OrderItems). Jika Anda sudah paham bagaimana penyaringan mutlak ini bekerja, ketik **"Lanjut Part 2"**, dan kita akan melihat bagaimana mesin melompat ke tabel tetangga menggunakan sintaks `include: { user: true }`!
+
+================================================================
+
+PART 2:
+
+### PART 2: Lompatan Relasi `include: { user: true }` & Pencocokan Kunci Tamu (*Foreign Key*)
+
+Dari Part 1, mesin Prisma memegang **2 baris pesanan** yang lolos seleksi mutlak (Pesanan `order-123` dan `ord-123-x`). Keduanya memiliki `userId` yang sama, yaitu `"user-sultan"`.
+
+Tapi, instruksi di *Controller* Anda belum selesai. Mesin membaca baris ini:
+
+```typescript
+include: {
+    user: true
+}
+
+```
+
+**Apa arti bahasa mesin ini?**
+"Hai Prisma, pesanan ini hanya menyimpan `userId` (Kunci Tamu / *Foreign Key*). Saya butuh identitas lengkap orangnya. Tolong pergi ke tabel `User`, cari orang yang ID-nya cocok dengan Kunci Tamu ini, dan bawakan **SEMUA** data tentang dia (`true`)."
+
+#### 1. Wujud Tabel `User` di Database
+
+Prisma melompat ke tabel `User` di PostgreSQL. Anggaplah isi tabel `User` Anda seperti ini:
+
+| id | email | firstName | lastName | password | role | createdAt |
+| --- | --- | --- | --- | --- | --- | --- |
+| `user-budi` | budi@gmail.com | Budi | Santoso | `$2b$10$xyz...` | USER | 2026-01-15 |
+| `user-sultan` | sultan@gmail.com | Sultan | Nabil | `$2b$10$abc...` | USER | 2026-02-20 |
+| `user-admin` | admin@app.com | Sang | Admin | `$2b$10$def...` | ADMIN | 2025-10-10 |
+
+#### 2. Eksekusi Pencocokan (Relasi JOIN)
+
+Prisma mengambil pesanan pertama yang lolos (`order-123`).
+
+1. Prisma melihat: Kunci Tamunya adalah `userId = "user-sultan"`.
+2. Prisma menelusuri kolom `id` di tabel `User` dari atas ke bawah.
+3. *Ketemu!* Baris kedua cocok.
+4. Karena instruksinya adalah `user: true` (yang berarti ambil semua kolom), Prisma menyedot kolom `email`, `firstName`, `lastName`, bahkan `password` dan `role` milik Sultan.
+5. Prisma membungkus semua data Sultan tersebut ke dalam sebuah objek JSON `{ ... }`, lalu **menyuntikkannya (menempelkannya)** ke dalam data pesanan `order-123` dengan nama laci `user`.
+
+Prisma kemudian mengambil pesanan kedua yang lolos (`ord-123-x`).
+
+1. Kunci Tamunya juga `userId = "user-sultan"`.
+2. Prisma melakukan hal yang sama: menyedot data Sultan Nabil dari tabel `User`, dan menempelkannya ke dalam pesanan `ord-123-x`.
+
+*(Catatan performa: Di belakang layar, Prisma/PostgreSQL sangat pintar. Ia tidak bolak-balik ke tabel User dua kali, melainkan menggunakan perintah SQL `JOIN` untuk mencocokkan semuanya sekaligus dalam satu tarikan napas milidetik).*
+
+#### 3. Wujud Data Sementara di RAM (Setelah Lompatan Pertama)
+
+Sekarang, wujud data yang dipegang oleh mesin Prisma di RAM Anda sudah semakin gemuk dan bersarang (*nested*). Bentuknya kira-kira seperti ini:
+
+```json
+[
+  {
+    "id": "order-123",
+    "orderNumber": "INV-123",
+    "userId": "user-sultan",
+    "status": "PENDING",
+    "totalAmount": 150000,
+    "shippingAddress": "Jl. Budi Luhur 1",
+    // ... (kolom order lainnya)
+    "user": {  // <--- INI HASIL DARI include: { user: true }
+      "id": "user-sultan",
+      "email": "sultan@gmail.com",
+      "firstName": "Sultan",
+      "lastName": "Nabil",
+      "password": "$2b$10$abc...", // (Sangat kotor dan rahasia!)
+      "role": "USER",
+      "createdAt": "2026-02-20"
+    }
+  },
+  {
+    "id": "ord-123-x",
+    "orderNumber": "INV-123-X",
+    "userId": "user-sultan",
+    "status": "PENDING",
+    "totalAmount": 200000,
+    // ...
+    "user": {  // <--- DITEMPELKAN JUGA DI PESANAN KEDUA
+      "id": "user-sultan",
+      "email": "sultan@gmail.com",
+      "firstName": "Sultan",
+      "lastName": "Nabil",
+      "password": "$2b$10$abc...", 
+      "role": "USER",
+      "createdAt": "2026-02-20"
+    }
+  }
+]
+
+```
+
+Lihat? Data pembeli kini sudah berhasil ditarik secara utuh dan menempel pada masing-masing struk pesanannya.
+
+Tapi misi Prisma belum selesai. Di struk tersebut belum ada daftar barangnya!
+
+Silakan beri instruksi untuk **"Lanjut Part 3"**, dan kita akan membedah tingkat relasi yang paling dalam dan rumit: `include: { orderItems: { include: { product: true } } }`!
+
+================================================================
+

@@ -1,0 +1,101 @@
+=======================================================================
+CATATAN INTEGRASI PAYMENT GATEWAY (STRIPE)
+Proyek E-Commerce NestJS 
+Pemilik Catatan: Sultan Nabil
+=======================================================================
+
+1. KONSEP DASAR PAYMENT GATEWAY
+-----------------------------------------------------------------------
+Aplikasi kita (Backend) dilarang keras menyentuh, meminta, atau menyimpan 
+nomor kartu kredit pembeli demi keamanan. 
+Oleh karena itu, kita menggunakan perantara (Payment Gateway) bernama Stripe.
+
+Alur kerjanya terbagi 2 tahap mutlak:
+- Tahap 1 (Backend): Backend menelpon Stripe untuk mendaftarkan tagihan 
+  (disebut "Payment Intent"). Stripe membalas dengan memberi tiket rahasia 
+  (client_secret).
+- Tahap 2 (Frontend): Backend memberikan tiket rahasia itu ke Frontend. 
+  Frontend menggunakan tiket itu untuk membuka form kartu kredit yang 
+  terhubung langsung ke Stripe. Transaksi terjadi antara pembeli dan Stripe.
+
+2. LINK PENTING STRIPE
+-----------------------------------------------------------------------
+- Dashboard Utama (Untuk melihat uang masuk/transaksi):
+  https://dashboard.stripe.com/
+- Halaman Pengambilan API Key (Secret Key & Publishable Key):
+  https://dashboard.stripe.com/test/apikeys
+- Dokumentasi Resmi Stripe (Cara membuat Payment Intent):
+  https://docs.stripe.com/api/payment_intents/create
+
+3. KUNCI RAHASIA & LINGKUNGAN (ENVIRONMENT)
+-----------------------------------------------------------------------
+- Saat mode pengembangan, pastikan label "Sandbox" atau "Test mode" 
+  di Dashboard Stripe selalu AKTIF.
+- Kunci yang dimasukkan ke file .env adalah SECRET KEY (dimulai dengan sk_test_...).
+- JANGAN PERNAH menaruh kunci sk_test_ ini di kode Frontend. Frontend hanya 
+  boleh memegang Publishable Key (pk_test_...).
+
+4. ANATOMI KODE BACKEND & DATABASE
+-----------------------------------------------------------------------
+- Class Stripe: Diinisialisasi di constructor Service menggunakan kunci rahasia 
+  dari .env dan `apiVersion` (contoh: '2026-06-24.dahlia'). Versi ini harus 
+  cocok dengan library Stripe yang terinstal di package.json (node_modules).
+- Matematika Uang: Stripe tidak menerima desimal. Harga dalam Dollar harus 
+  selalu dikali 100 (Math.round(amount * 100)) agar menjadi hitungan Sen (Cents).
+- transactionId: Saat Stripe berhasil membuat Payment Intent, mereka mengembalikan 
+  ID referensi (dimulai dengan pi_...). ID ini WAJIB disimpan di tabel PostgreSQL 
+  (kolom transactionId) agar Backend punya bukti kecocokan tagihan.
+- Inilah wujud asli output yang tersimpan di dalam memori (RAM) pada variabel paymentIntent (sintaks: const paymentIntent = await this.stripe.paymentIntents.create({ ... }) ):
+{
+  "id": "pi_1J2Y3Z4A5B6C7D8E9F0G1H2I3J4K5L6",  // <--- INI SANGAT PENTING (ID dari Stripe)
+  "object": "payment_intent",
+  "amount": 9999,
+  "amount_capturable": 0,
+  "amount_details": {
+    "tip": {}
+  },
+  "amount_received": 0,
+  "application": null,
+  "application_fee_amount": null,
+  "automatic_payment_methods": {
+    "enabled": true
+  },
+  "canceled_at": null,
+  "cancellation_reason": null,
+  "capture_method": "automatic",
+  "client_secret": "pi_1J2Y3Z4A5B6C7D8_secret_abcdefghijklmnopqrstuvwx", // <--- INI KUNCI RAHASIA UTAMA
+  "confirmation_method": "automatic",
+  "created": 1625097600,
+  "currency": "usd",
+  "customer": null,
+  "description": null,
+  "last_payment_error": null,
+  "livemode": false,
+  "metadata": {
+    "orderId": "order-123",
+    "userId": "user-sultan"
+  },
+  "payment_method": null,
+  "payment_method_types": [
+    "card"
+  ],
+  "receipt_email": null,
+  "status": "requires_payment_method"
+}
+
+5. JIKA BINGUNG HARUS MULAI DARI MANA (DI MASA DEPAN)
+-----------------------------------------------------------------------
+Jika lupa alur kodenya, baca file dengan urutan ini:
+1. create-payment-intent.dto.ts -> Lihat apa saja yang wajib dikirim Frontend.
+2. payments.controller.ts -> Lihat rute penangkapannya (POST /create-intent).
+3. payments.service.ts -> Baca urutan logikanya: 
+   (Cek pesanan ada) -> (Cek belum dibayar) -> (Telpon Stripe) -> (Simpan ke DB) -> (Return client_secret).
+
+6. NOMOR KARTU KREDIT TESTING (DUMMY)
+-----------------------------------------------------------------------
+Jika butuh mencoba transaksi sukses di Frontend, gunakan kartu fiktif Stripe:
+- Nomor Kartu: 4242 4242 4242 4242
+- Expiry Date: Bulan & Tahun berapapun di masa depan (contoh: 12/30)
+- CVC: Angka bebas (contoh: 123)
+- Nama/ZIP: Bebas
+=======================================================================
