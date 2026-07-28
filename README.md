@@ -66,16 +66,16 @@ This project was built to practice production-style patterns: JWT authentication
 -->
 
 ### Landing Page
-(./screenshots/landing.png)
+![Tampilan Landing Page](./screenshots/landing.png)
 
 ### Login Page
-(./screenshots/login.png)
+![Tampilan Login Page](./screenshots/login.png)
 
 ### Cart Page
-(./screenshots/cart.png)
+![Tampilan Cart Page](./screenshots/cart.png)
 
 ### Checkout Page
-(./screenshots/checkout.png)
+![Tampilan Checkout Page](./screenshots/checkout.png)
 
 ---
 
