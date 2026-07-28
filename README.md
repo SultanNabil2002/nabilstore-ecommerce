@@ -178,12 +178,6 @@ cd front
 npm run dev
 ```
 
-The API will be available at `http://localhost:3001`, with interactive Swagger documentation at:
-
-```
-http://localhost:3001/api/docs
-```
-
 The frontend will be available at:
 
 ```
@@ -195,6 +189,9 @@ http://localhost:3000
 ## 📄 API Documentation
 
 Once the backend is running, full interactive API documentation (request/response schemas, auth requirements, try-it-out console) is available via Swagger UI at `/api/docs`.
+```
+http://localhost:3001/api/docs
+```
 
 ---
 
