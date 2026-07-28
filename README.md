@@ -1,4 +1,4 @@
-# NabilStore — Full-Stack E-Commerce Platform
+# NabilStore - Fullstack E-Commerce Platform
 
 A full-stack e-commerce web application built as a hands-on learning project, covering the complete flow from product browsing to checkout with real payment processing. The backend is a REST API built with **NestJS + PostgreSQL (Prisma)**, and the frontend is built with **Next.js (App Router) + Redux Toolkit**.
 
