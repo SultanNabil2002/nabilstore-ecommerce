@@ -1,4 +1,4 @@
-# NabilStore - Fullstack E-Commerce Platform
+# NABILSTORE - Fullstack E-Commerce Platform
 
 A full-stack e-commerce web application built as a hands-on learning project, covering the complete flow from product browsing to checkout with real payment processing. The backend is a REST API built with **NestJS + PostgreSQL (Prisma)**, and the frontend is built with **Next.js (App Router) + Redux Toolkit**.
 
@@ -58,12 +58,6 @@ This project was built to practice production-style patterns: JWT authentication
 ---
 
 ## 📸 Screenshots
-
-<!--
-  Tambahkan screenshot di sini dengan format:
-  ![Nama Halaman](./screenshots/nama-file.png)
-  Simpan gambar-gambarnya di folder /screenshots di root project.
--->
 
 ### Landing Page
 ![Tampilan Landing Page](./screenshots/landing.png)
